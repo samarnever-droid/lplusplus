@@ -46,6 +46,8 @@ jobs:
           cmp registry/index.json website/public/registry/index.json
       - name: Audit and build website
         working-directory: website
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsubHBsdXNwbHVzLmJvbmQk
         run: |
           npm ci
           npm audit --audit-level=high

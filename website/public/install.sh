@@ -5,7 +5,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${LPP_INSTALL_DIR:-"$HOME/.lpp"}
 BIN_DIR="$INSTALL_DIR/bin"
 LIB_DIR="$INSTALL_DIR/lib"
-VERSION=${LPP_VERSION:-v0.3.2}
+VERSION=${LPP_VERSION:-latest}
 case "$VERSION" in
   latest|v*) ;;
   *) VERSION="v$VERSION" ;;
@@ -118,9 +118,12 @@ install_release() {
     [ -d "$root/lib" ] && [ ! -L "$root/lib" ] || return 1
     [ -f "$root/bin/lpp" ] && [ ! -L "$root/bin/lpp" ] && [ -x "$root/bin/lpp" ] || return 1
     [ -f "$root/bin/lpp-link" ] && [ ! -L "$root/bin/lpp-link" ] && [ -x "$root/bin/lpp-link" ] || return 1
-    printf '%s\n' "[2/3] Installing verified compiler, linker, and packaged runtimes..."
+    printf '%s\n' "[2/3] Installing verified compiler, linker, package manager, and packaged runtimes..."
     cp "$root/bin/lpp" "$BIN_DIR/lpp"
     cp "$root/bin/lpp-link" "$BIN_DIR/lpp-link"
+    if [ -f "$root/bin/keel" ] && [ ! -L "$root/bin/keel" ] && [ -x "$root/bin/keel" ]; then
+        cp "$root/bin/keel" "$BIN_DIR/keel"
+    fi
     cp -r "$root/lib/"* "$LIB_DIR/"
     if [ -d "$root/pm" ]; then rm -rf "$INSTALL_DIR/pm"; cp -r "$root/pm" "$INSTALL_DIR/pm"; fi
     if [ -d "$root/registry" ]; then rm -rf "$INSTALL_DIR/registry"; cp -r "$root/registry" "$INSTALL_DIR/registry"; fi
@@ -134,11 +137,12 @@ install_source() {
         printf '%s\n' "Rust/Cargo is required for source installation. Use the release installer path or install Rust." >&2
         exit 1
     }
-    printf '%s\n' "[1/3] Building L++ compiler and linker from source..."
-    (cd "$PROJECT_DIR" && cargo build --release --locked --features all-arch --bin lpp --bin lpp-link)
-    printf '%s\n' "[2/3] Packaging local compiler and runtime objects..."
+    printf '%s\n' "[1/3] Building L++ compiler, linker, and Keel package manager from source..."
+    (cd "$PROJECT_DIR" && cargo build --release --locked --features all-arch --bin lpp --bin lpp-link && cargo build --release --locked -p keel --bin keel)
+    printf '%s\n' "[2/3] Packaging local compiler, Keel, and runtime objects..."
     cp "$PROJECT_DIR/target/release/lpp" "$BIN_DIR/lpp"
     cp "$PROJECT_DIR/target/release/lpp-link" "$BIN_DIR/lpp-link"
+    cp "$PROJECT_DIR/target/release/keel" "$BIN_DIR/keel"
     cp "$PROJECT_DIR/lpp_runtime.c" "$LIB_DIR/lpp_runtime.c"
     if [ -d "$PROJECT_DIR/pm" ]; then rm -rf "$INSTALL_DIR/pm"; cp -r "$PROJECT_DIR/pm" "$INSTALL_DIR/pm"; fi
     if [ -d "$PROJECT_DIR/registry" ]; then rm -rf "$INSTALL_DIR/registry"; cp -r "$PROJECT_DIR/registry" "$INSTALL_DIR/registry"; fi
@@ -180,7 +184,11 @@ fi
 INSTALLED_VERSION="$($BIN_DIR/lpp -v 2>/dev/null || true)"
 
 printf '%s\n' ""
-printf '%s\n' "Installed commands: lpp, lpp-link"
+if [ -x "$BIN_DIR/keel" ]; then
+    printf '%s\n' "Installed commands: lpp, lpp-link, keel"
+else
+    printf '%s\n' "Installed commands: lpp, lpp-link"
+fi
 printf '%s\n' "Requested release: $VERSION"
 if [ -n "${RELEASE_TARGET:-}" ]; then
     printf '%s\n' "Release asset: $RELEASE_TARGET"

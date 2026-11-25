@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
 import {
+  Activity,
   ArrowLeft,
   Check,
   Copy,
@@ -11,46 +12,57 @@ import {
   Lock,
   Package,
   RefreshCw,
+  Shield,
   ShieldCheck,
+  Sparkles,
   Terminal,
   UploadCloud,
+  UserCheck,
 } from "lucide-react";
+import {
+  SignIn,
+  UserButton,
+  UserProfile,
+  useAuth,
+  useUser,
+} from "@clerk/react";
 import Footer from "./components/Footer";
+import { LppClerkProvider } from "./lib/clerk";
 import "./index.css";
 
-const COMMANDS = [
+const GIT_COMMANDS = [
   {
     id: "registry",
-    label: "Choose the git registry remote",
+    label: "1. Point Keel at your writable git registry (SSH for push)",
     command: "export KEEL_REGISTRY=git@github.com:samarnever-droid/llppregistry.git",
   },
   {
     id: "init",
-    label: "Create or inspect the manifest",
-    command: "keel init  # creates Keel.toml when starting a new package",
+    label: "2. Create or inspect the package manifest",
+    command: "keel init  # creates Keel.toml + src/main.lpp",
   },
   {
     id: "verify",
-    label: "Verify locally before publish",
+    label: "3. Check, test, and verify locally before publishing",
     command: "keel check && keel test && keel verify",
   },
   {
     id: "publish",
-    label: "Publish as a git commit + push",
+    label: "4. Pack, checksum, commit, and push the release",
     command: "keel publish",
   },
   {
     id: "consumer",
-    label: "Consumer update path",
-    command: "keel fetch && keel update && keel build",
+    label: "5. Consumers install directly (no env var needed)",
+    command: "keel add <package> && keel install && keel build",
   },
 ];
 
 const STATUS = [
   { label: "Domain", value: "lplusplus.bond", tone: "text-acid" },
-  { label: "Registry mirror", value: "registry.lplusplus.bond", tone: "text-emerald-300" },
-  { label: "Authority", value: "git index + blob", tone: "text-sky-300" },
-  { label: "Auth", value: "git push rights", tone: "text-violet-300" },
+  { label: "Auth (Clerk Pro)", value: "clerk.lplusplus.bond", tone: "text-violet-300" },
+  { label: "Registry Edge API", value: "registry.lplusplus.bond", tone: "text-emerald-300" },
+  { label: "Durable Authority", value: "llppregistry (git + SHA-256)", tone: "text-sky-300" },
 ];
 
 const FLOW = [
@@ -61,22 +73,34 @@ const FLOW = [
   },
   {
     icon: UploadCloud,
-    title: "Artifact",
-    text: "Keel packs the source and stores it by SHA-256, so downloads are tamper-evident and reproducible.",
+    title: "SHA-256 Artifact",
+    text: "Keel packs the source deterministically by SHA-256 so every download is tamper-evident.",
   },
   {
     icon: GitBranch,
-    title: "Registry commit",
-    text: "index/<sparse-path> and blob/<sha256> are committed together. Duplicate versions are immutable.",
+    title: "Dual Publishing",
+    text: "Use the Clerk Publisher Studio for guided manifest & PR publishing, or push directly with `keel publish`.",
   },
   {
     icon: RefreshCw,
-    title: "Mirrors update",
-    text: "GitHub Pages and the Cloudflare Worker expose read-only index/search/status endpoints for the website.",
+    title: "Cloudflare Edge Mirror",
+    text: "Cloudflare Pages and registry.lplusplus.bond serve fast global search, stats, and index lookups.",
   },
 ];
 
-function CopyCommand({ id, label, command, copied, onCopy }: { id: string; label: string; command: string; copied: string | null; onCopy: (text: string, id: string) => void }) {
+function CopyCommand({
+  id,
+  label,
+  command,
+  copied,
+  onCopy,
+}: {
+  id: string;
+  label: string;
+  command: string;
+  copied: string | null;
+  onCopy: (text: string, id: string) => void;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -88,7 +112,11 @@ function CopyCommand({ id, label, command, copied, onCopy }: { id: string; label
           onClick={() => onCopy(command, id)}
           className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-[11px] text-white/70 hover:border-acid/40 hover:text-acid"
         >
-          {copied === id ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          {copied === id ? (
+            <Check className="h-3 w-3 text-emerald-400" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
           {copied === id ? "Copied" : "Copy"}
         </button>
       </div>
@@ -100,12 +128,84 @@ function CopyCommand({ id, label, command, copied, onCopy }: { id: string; label
 }
 
 function AccountApp() {
+  const { isLoaded, isSignedIn, userId, getToken } = useAuth();
+  const { user } = useUser();
+
   const [copied, setCopied] = useState<string | null>(null);
+  const [studioTab, setStudioTab] = useState<"studio" | "git" | "token" | "security">("studio");
+
+  // Interactive Manifest & Release Builder state
+  const [pkgName, setPkgName] = useState("lpp-my-pkg");
+  const [pkgVersion, setPkgVersion] = useState("0.1.0");
+  const [pkgLicense, setPkgLicense] = useState("MIT");
+  const [pkgDescription, setPkgDescription] = useState(
+    "High-performance native library written in pure L++."
+  );
+  const [pkgDeps, setPkgDeps] = useState("lpp-semver = \"^1.0.0\"");
+
+  // Live Worker health + JWT state
+  const [workerHealth, setWorkerHealth] = useState<string | null>(null);
+  const [checkingHealth, setCheckingHealth] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
 
   const copyText = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
     setCopied(id);
     setTimeout(() => setCopied(null), 1800);
+  };
+
+  const publisherDisplay =
+    user?.fullName || user?.username || user?.primaryEmailAddress?.emailAddress || "L++ Developer";
+  const publisherEmail = user?.primaryEmailAddress?.emailAddress || "";
+
+  const generatedManifest = `[package]
+name = "${pkgName.trim() || "lpp-my-pkg"}"
+version = "${pkgVersion.trim() || "0.1.0"}"
+edition = "2024"
+license = "${pkgLicense.trim() || "MIT"}"
+authors = ["${publisherDisplay}${publisherEmail ? ` <${publisherEmail}>` : ""}"]
+description = "${pkgDescription.replace(/"/g, '\\"')}"
+
+[dependencies]
+${pkgDeps.trim()}
+`;
+
+  const publishSnippet = `keel check && keel test && keel verify && KEEL_REGISTRY=git@github.com:samarnever-droid/llppregistry.git keel publish`;
+
+  const githubIssueUrl = (() => {
+    const title = encodeURIComponent(
+      `[Publish] ${pkgName.trim() || "lpp-my-pkg"}@${pkgVersion.trim() || "0.1.0"}`
+    );
+    const body = encodeURIComponent(
+      `### Publisher (Clerk Verified)\n- **Publisher**: ${publisherDisplay}\n- **Email**: ${publisherEmail || "N/A"}\n- **Clerk User ID**: \`${userId || "unauthenticated"}\`\n\n### Keel.toml\n\`\`\`toml\n${generatedManifest}\`\`\`\n\n### Verification\n- [ ] \`keel check && keel test && keel verify\` passed\n- [ ] SHA-256 artifact matches \`Keel.lock\`\n`
+    );
+    return `https://github.com/samarnever-droid/llppregistry/issues/new?title=${title}&body=${body}`;
+  })();
+
+  const handleCopySessionJwt = async () => {
+    try {
+      const token = await getToken();
+      if (token) {
+        await navigator.clipboard.writeText(token);
+        setTokenCopied(true);
+        setTimeout(() => setTokenCopied(false), 2000);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handlePingWorker = async () => {
+    setCheckingHealth(true);
+    try {
+      const res = await fetch("https://registry.lplusplus.bond/health");
+      const data = await res.json();
+      setWorkerHealth(JSON.stringify(data, null, 2));
+    } catch (err) {
+      setWorkerHealth(`Error contacting registry.lplusplus.bond: ${String(err)}`);
+    } finally {
+      setCheckingHealth(false);
+    }
   };
 
   return (
@@ -116,28 +216,33 @@ function AccountApp() {
             <ArrowLeft className="h-4 w-4" />
             <span className="font-mono text-xs">Back to Main</span>
           </a>
-          <div className="flex items-center gap-2 rounded-full border border-acid/25 bg-acid/10 px-3 py-1 font-mono text-xs text-acid">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Git-backed publisher guide
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 rounded-full border border-acid/25 bg-acid/10 px-3 py-1 font-mono text-xs text-acid sm:flex">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              {isLoaded && isSignedIn ? "Clerk Pro Publisher Studio" : "Dual-Option Publishing"}
+            </div>
+            {isLoaded && isSignedIn && <UserButton />}
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl w-full flex-1 px-5 md:px-8 py-10 space-y-10">
+        {/* Hero */}
         <section className="overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.06] via-white/[0.025] to-acid/[0.04] p-6 md:p-10 shadow-2xl">
           <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
             <div className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 font-mono text-xs text-emerald-300">
-                <Lock className="h-3.5 w-3.5" />
-                Clerk removed — git push rights are the auth layer
+                <Sparkles className="h-3.5 w-3.5" />
+                {isLoaded && isSignedIn
+                  ? `Signed in as ${publisherDisplay}`
+                  : "Clerk Pro + Durable Git Registry"}
               </div>
               <div>
                 <h1 className="max-w-3xl font-mono text-3xl font-black leading-tight tracking-tight text-white sm:text-5xl">
-                  Publish L++ packages through a durable <span className="text-acid">git registry</span>
+                  Two ways to publish <span className="text-acid">L++ packages</span>
                 </h1>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-white/65 sm:text-base">
-                  The old browser token flow was not durable: Worker memory cannot be the package registry. The cleaned design uses Keel to pack,
-                  checksum, commit, and push package releases into a git repository. The website and Cloudflare Worker are fast read-only mirrors.
+                  Use <span className="text-white font-semibold">Option 1 (Clerk Publisher Studio)</span> for verified developer identity, interactive manifest generation, session JWTs, MFA/passkeys, and guided registry releases — or <span className="text-acid font-semibold">Option 2 (Direct Keel Git CLI)</span> to commit &amp; push straight into <code className="text-white">llppregistry</code>.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -150,6 +255,8 @@ function AccountApp() {
                 </a>
                 <a
                   href="https://registry.lplusplus.bond/health"
+                  target="_blank"
+                  rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 font-mono text-xs text-white/80 hover:border-acid/40 hover:text-acid"
                 >
                   Worker health
@@ -161,14 +268,306 @@ function AccountApp() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               {STATUS.map((item) => (
                 <div key={item.label} className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                  <div className="font-mono text-[11px] uppercase tracking-wider text-white/40">{item.label}</div>
-                  <div className={`mt-1 font-mono text-sm font-bold ${item.tone}`}>{item.value}</div>
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-white/40">
+                    {item.label}
+                  </div>
+                  <div className={`mt-1 font-mono text-sm font-bold ${item.tone}`}>
+                    {item.value}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </section>
 
+        {/* Authenticated Clerk Pro Studio OR Sign-In + Direct Git Side-by-Side */}
+        {!isLoaded ? (
+          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-12 text-center font-mono text-sm text-white/55">
+            Initializing Clerk Pro session on clerk.lplusplus.bond...
+          </div>
+        ) : isSignedIn && user ? (
+          <section className="space-y-6">
+            {/* Studio Navigation Tabs */}
+            <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+              {[
+                { id: "studio", label: "Publish Studio", icon: UploadCloud },
+                { id: "git", label: "Direct Keel Git CLI", icon: GitBranch },
+                { id: "token", label: "Session & Edge API", icon: Activity },
+                { id: "security", label: "Account & Security (Clerk Pro)", icon: Shield },
+              ].map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setStudioTab(t.id as typeof studioTab)}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs font-semibold transition-all ${
+                      studioTab === t.id
+                        ? "bg-acid text-ink"
+                        : "text-white/70 hover:bg-white/5 hover:text-white"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {studioTab === "studio" && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="font-mono text-lg font-bold text-white">
+                        Interactive Manifest &amp; Release Builder
+                      </h2>
+                      <p className="font-mono text-xs text-white/45">
+                        Pre-filled with your verified Clerk identity ({publisherDisplay})
+                      </p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 font-mono text-[11px] text-emerald-300">
+                      <UserCheck className="h-3 w-3" />
+                      Verified
+                    </span>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-white/50">
+                        Package Name
+                      </span>
+                      <input
+                        value={pkgName}
+                        onChange={(e) => setPkgName(e.target.value)}
+                        className="w-full rounded-xl border border-white/15 bg-[#05070a] px-3 py-2 font-mono text-xs text-white focus:border-acid focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-1.5">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-white/50">
+                        Version (SemVer)
+                      </span>
+                      <input
+                        value={pkgVersion}
+                        onChange={(e) => setPkgVersion(e.target.value)}
+                        className="w-full rounded-xl border border-white/15 bg-[#05070a] px-3 py-2 font-mono text-xs text-white focus:border-acid focus:outline-none"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block space-y-1.5">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-white/50">
+                      License
+                    </span>
+                    <input
+                      value={pkgLicense}
+                      onChange={(e) => setPkgLicense(e.target.value)}
+                      className="w-full rounded-xl border border-white/15 bg-[#05070a] px-3 py-2 font-mono text-xs text-white focus:border-acid focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block space-y-1.5">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-white/50">
+                      Description
+                    </span>
+                    <input
+                      value={pkgDescription}
+                      onChange={(e) => setPkgDescription(e.target.value)}
+                      className="w-full rounded-xl border border-white/15 bg-[#05070a] px-3 py-2 font-mono text-xs text-white focus:border-acid focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="block space-y-1.5">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-white/50">
+                      Dependencies (TOML lines)
+                    </span>
+                    <textarea
+                      rows={3}
+                      value={pkgDeps}
+                      onChange={(e) => setPkgDeps(e.target.value)}
+                      className="w-full rounded-xl border border-white/15 bg-[#05070a] px-3 py-2 font-mono text-xs text-white focus:border-acid focus:outline-none"
+                    />
+                  </label>
+
+                  <div className="flex flex-wrap gap-3 pt-2">
+                    <a
+                      href={githubIssueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-xl bg-acid px-4 py-2.5 font-mono text-xs font-bold text-ink hover:brightness-110"
+                    >
+                      <UploadCloud className="h-3.5 w-3.5" />
+                      Submit Verified Release Request
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                    <button
+                      onClick={() => copyText(generatedManifest, "manifest")}
+                      className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 font-mono text-xs text-white/80 hover:border-acid/40 hover:text-acid"
+                    >
+                      {copied === "manifest" ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                      {copied === "manifest" ? "Copied Keel.toml" : "Copy Keel.toml"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="font-mono text-xs font-bold uppercase tracking-wider text-white/55">
+                        Generated Keel.toml
+                      </span>
+                      <span className="font-mono text-[11px] text-acid">live preview</span>
+                    </div>
+                    <pre className="overflow-x-auto rounded-2xl border border-white/10 bg-[#05070a] p-4 font-mono text-xs leading-6 text-acid">
+                      {generatedManifest}
+                    </pre>
+                  </div>
+
+                  <CopyCommand
+                    id="studio-publish"
+                    label="One-line verify & publish command"
+                    command={publishSnippet}
+                    copied={copied}
+                    onCopy={copyText}
+                  />
+                </div>
+              </div>
+            )}
+
+            {studioTab === "git" && (
+              <div className="space-y-3">
+                {GIT_COMMANDS.map((item) => (
+                  <CopyCommand key={item.id} {...item} copied={copied} onCopy={copyText} />
+                ))}
+              </div>
+            )}
+
+            {studioTab === "token" && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acid/25 bg-acid/10 text-acid">
+                      <Key className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="font-mono text-lg font-bold text-white">
+                        Clerk Session &amp; API JWT
+                      </h2>
+                      <p className="font-mono text-xs text-white/45">
+                        Signed by clerk.lplusplus.bond
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 rounded-2xl border border-white/10 bg-black/30 p-4 font-mono text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-white/45">User ID</span>
+                      <span className="text-white">{userId}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-white/45">Primary Email</span>
+                      <span className="text-acid">{publisherEmail || "None"}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-white/45">Frontend API</span>
+                      <span className="text-emerald-300">https://clerk.lplusplus.bond</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleCopySessionJwt}
+                    className="inline-flex items-center gap-2 rounded-xl bg-acid px-4 py-2.5 font-mono text-xs font-bold text-ink hover:brightness-110"
+                  >
+                    {tokenCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    {tokenCopied ? "Session JWT Copied!" : "Copy Bearer Session JWT"}
+                  </button>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-400/25 bg-emerald-400/10 text-emerald-300">
+                        <Activity className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h2 className="font-mono text-lg font-bold text-white">
+                          Cloudflare Edge Registry Check
+                        </h2>
+                        <p className="font-mono text-xs text-white/45">
+                          Live ping to registry.lplusplus.bond/health
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handlePingWorker}
+                      disabled={checkingHealth}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 font-mono text-xs text-white/80 hover:border-acid/40 hover:text-acid disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${checkingHealth ? "animate-spin" : ""}`} />
+                      {checkingHealth ? "Checking..." : "Ping Live Worker"}
+                    </button>
+                  </div>
+                  <pre className="min-h-[160px] overflow-x-auto rounded-2xl border border-white/10 bg-[#05070a] p-4 font-mono text-xs leading-6 text-emerald-300">
+                    {workerHealth || 'Click "Ping Live Worker" to inspect registry.lplusplus.bond/health'}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {studioTab === "security" && (
+              <div className="flex justify-center rounded-3xl border border-white/10 bg-white/[0.02] p-4 sm:p-6">
+                <UserProfile routing="hash" />
+              </div>
+            )}
+          </section>
+        ) : (
+          <section className="grid gap-8 lg:grid-cols-[1fr_1fr] lg:items-start">
+            <div className="rounded-3xl border border-acid/25 bg-white/[0.03] p-6 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acid/30 bg-acid/10 text-acid">
+                  <Lock className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="font-mono text-lg font-bold text-white">
+                    Option 1 — Clerk Pro Publisher Studio
+                  </h2>
+                  <p className="font-mono text-xs text-white/50">
+                    Sign in via clerk.lplusplus.bond (Passkeys, MFA, OAuth)
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-center">
+                <SignIn routing="hash" />
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-400/25 bg-emerald-400/10 text-emerald-300">
+                    <GitBranch className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="font-mono text-lg font-bold text-white">
+                      Option 2 — Direct Keel Git CLI
+                    </h2>
+                    <p className="font-mono text-xs text-white/50">
+                      Zero browser login required — push straight to llppregistry
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {GIT_COMMANDS.map((item) => (
+                    <CopyCommand key={item.id} {...item} copied={copied} onCopy={copyText} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Architecture Flow */}
         <section className="grid gap-4 md:grid-cols-4">
           {FLOW.map((item) => {
             const Icon = item.icon;
@@ -184,62 +583,32 @@ function AccountApp() {
           })}
         </section>
 
-        <section className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6">
-            <div className="mb-5 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acid/25 bg-acid/10 text-acid">
-                <Key className="h-5 w-5" />
-              </div>
-              <div>
-                <h2 className="font-mono text-lg font-bold text-white">What changed</h2>
-                <p className="font-mono text-xs text-white/45">No SaaS auth dependency, no fake tokens.</p>
-              </div>
-            </div>
-            <div className="space-y-4 text-sm leading-7 text-white/65">
-              <p>
-                Clerk and Supabase were only partially wired. The website could generate local-looking tokens, but the Worker stored token and publish state in memory.
-                That means a restart could forget publishers and packages.
-              </p>
-              <p>
-                The fixed model removes browser auth from the critical path. Package mutation is now the same security model developers already understand:
-                push access to a git repository, optionally protected by GitHub branch rules or pull-request review.
-              </p>
-              <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] p-4 text-emerald-100/80">
-                <ShieldCheck className="mb-2 h-5 w-5 text-emerald-300" />
-                Existing locked builds remain reproducible because Keel verifies every artifact by checksum from Keel.lock.
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {COMMANDS.map((item) => (
-              <CopyCommand key={item.id} {...item} copied={copied} onCopy={copyText} />
-            ))}
-          </div>
-        </section>
-
+        {/* Runtime surfaces */}
         <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 md:p-8">
           <div className="mb-6 flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acid/25 bg-acid/10 text-acid">
               <Layers className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="font-mono text-lg font-bold text-white">Runtime surfaces and env</h2>
-              <p className="font-mono text-xs text-white/45">Only the values below are needed for the public mirror.</p>
+              <h2 className="font-mono text-lg font-bold text-white">Live Infrastructure</h2>
+              <p className="font-mono text-xs text-white/45">
+                Cloudflare Pages + Worker + Clerk Pro custom domain
+              </p>
             </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-              <div className="font-mono text-xs text-white/40">Cloudflare vars</div>
+              <div className="font-mono text-xs text-white/40">Cloudflare &amp; Clerk endpoints</div>
               <pre className="mt-3 overflow-x-auto rounded-xl bg-[#05070a] p-3 font-mono text-xs leading-6 text-acid">{`DOMAIN=lplusplus.bond
+CLERK_FRONTEND_API=https://clerk.lplusplus.bond
 REGISTRY_URL=https://registry.lplusplus.bond
-STATIC_INDEX_URL=https://lplusplus.bond/registry/index.json
 GITHUB_REPO=samarnever-droid/llppregistry`}</pre>
             </div>
             <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-              <div className="font-mono text-xs text-white/40">Optional secret</div>
-              <pre className="mt-3 overflow-x-auto rounded-xl bg-[#05070a] p-3 font-mono text-xs leading-6 text-acid">wrangler secret put GITHUB_TOKEN</pre>
-              <p className="mt-3 text-sm text-white/55">Used only for GitHub API rate limits on download statistics. It is not a publish credential.</p>
+              <div className="font-mono text-xs text-white/40">Security model</div>
+              <p className="mt-3 text-sm leading-7 text-white/60">
+                Clerk Pro secures publisher identities, passkeys, MFA, and sessions on <code className="text-white">clerk.lplusplus.bond</code>. Package artifacts remain immutable and SHA-256 verified in <code className="text-acid">Keel.lock</code>.
+              </p>
             </div>
           </div>
         </section>
@@ -252,6 +621,8 @@ GITHUB_REPO=samarnever-droid/llppregistry`}</pre>
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <AccountApp />
+    <LppClerkProvider>
+      <AccountApp />
+    </LppClerkProvider>
   </React.StrictMode>
 );

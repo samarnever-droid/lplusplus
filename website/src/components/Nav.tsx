@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Menu, X, ArrowUpRight, Package, Key } from "lucide-react";
+import { Menu, X, ArrowUpRight, Package, Key, Sparkles } from "lucide-react";
+import { UserButton, useAuth } from "@clerk/react";
 import { EASE } from "../lib/ui";
 
 const LINKS = [
@@ -22,6 +23,7 @@ interface NavProps {
 export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const { isLoaded, isSignedIn } = useAuth();
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 24);
@@ -80,13 +82,28 @@ export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
             <Package className="h-3.5 w-3.5 text-acid" />
             Registry
           </button>
-          <button
-            onClick={openPublisherGuide}
-            className="hidden items-center gap-1.5 rounded-lg border border-acid/40 bg-acid/10 px-3 py-1.5 font-mono text-[12px] text-acid transition-all hover:bg-acid/20 sm:flex"
-          >
-            <Key className="h-3.5 w-3.5" />
-            Publish Guide
-          </button>
+          {isLoaded && isSignedIn ? (
+            <>
+              <a
+                href={`${import.meta.env.BASE_URL}account.html`}
+                className="hidden items-center gap-1.5 rounded-lg border border-acid/40 bg-acid/10 px-3 py-1.5 font-mono text-[12px] text-acid transition-all hover:bg-acid/20 sm:flex"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Studio
+              </a>
+              <div className="flex items-center">
+                <UserButton />
+              </div>
+            </>
+          ) : (
+            <button
+              onClick={openPublisherGuide}
+              className="hidden items-center gap-1.5 rounded-lg border border-acid/40 bg-acid/10 px-3 py-1.5 font-mono text-[12px] text-acid transition-all hover:bg-acid/20 sm:flex"
+            >
+              <Key className="h-3.5 w-3.5" />
+              Sign In / Publish
+            </button>
+          )}
           <a
             href="#install"
             className="group hidden items-center gap-1.5 rounded-lg bg-acid px-4 py-2 font-mono text-[12px] font-semibold text-ink transition-all hover:brightness-110 sm:flex"

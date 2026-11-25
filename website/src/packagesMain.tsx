@@ -24,6 +24,7 @@ import {
   Code,
 } from "lucide-react";
 import { rankPackages, PackageItem, SortMode } from "./lib/searchAlgorithm";
+import { LppClerkProvider } from "./lib/clerk";
 import Footer from "./components/Footer";
 import "./index.css";
 
@@ -411,6 +412,8 @@ export function PackagesApp() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <PackagesApp />
+    <LppClerkProvider>
+      <PackagesApp />
+    </LppClerkProvider>
   </React.StrictMode>
 );
