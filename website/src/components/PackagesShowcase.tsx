@@ -105,7 +105,7 @@ export function PackagesShowcase() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <span className="rounded-full border border-acid/40 bg-acid/10 px-3 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_12px_rgba(200,241,75,0.2)]">
+              <span className="rounded-full border border-acid/40 bg-acid/10 px-3 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_12px_rgba(108,71,255,0.2)]">
                 <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
                 Live Registry &bull; {stats.packages_count} Native Packages
               </span>
@@ -127,7 +127,7 @@ export function PackagesShowcase() {
           <div>
             <a
               href="/packages.html"
-              className="inline-flex items-center gap-2 rounded-xl bg-acid px-6 py-3 font-mono text-xs font-bold text-ink hover:brightness-110 shadow-[0_0_20px_rgba(200,241,75,0.3)] transition-all"
+              className="inline-flex items-center gap-2 rounded-xl bg-acid px-6 py-3 font-mono text-xs font-bold text-white hover:brightness-110 shadow-[0_0_20px_rgba(108,71,255,0.3)] transition-all"
             >
               <Package className="h-4 w-4" />
               Explore All {stats.packages_count} Packages

@@ -36,7 +36,7 @@ export default function Footer() {
         <div className="grid gap-12 md:grid-cols-[1.2fr_1.8fr]">
           <div>
             <a href="#top" className="flex w-max items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-lg bg-acid font-mono text-base font-bold text-ink">
+              <span className="grid h-10 w-10 place-items-center rounded-lg bg-acid font-mono text-base font-bold text-white">
                 L++
               </span>
               <span className="font-mono text-[11px] leading-tight text-white/40">
@@ -51,7 +51,7 @@ export default function Footer() {
             </p>
             <a
               href="#install"
-              className="group mt-7 inline-flex items-center gap-2 rounded-xl border border-acid/30 bg-acid/[0.06] px-5 py-3 font-mono text-[12.5px] text-acid transition-all hover:bg-acid hover:text-ink"
+              className="group mt-7 inline-flex items-center gap-2 rounded-xl border border-acid/30 bg-acid/[0.06] px-5 py-3 font-mono text-[12.5px] text-acid transition-all hover:bg-acid hover:text-white"
             >
               Build something fast
               <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />

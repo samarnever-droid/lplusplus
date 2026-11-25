@@ -7,7 +7,7 @@ export function Reveal({
   children,
   delay = 0,
   className = "",
-  y = 28,
+  y = 22,
 }: {
   children: ReactNode;
   delay?: number;
@@ -18,8 +18,8 @@ export function Reveal({
     <motion.div
       initial={{ opacity: 0, y }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-70px" }}
-      transition={{ duration: 0.8, delay, ease: EASE }}
+      viewport={{ once: true, margin: "-60px" }}
+      transition={{ duration: 0.7, delay, ease: EASE }}
       className={className}
     >
       {children}
@@ -40,17 +40,17 @@ export function SectionHead({
 }) {
   return (
     <Reveal className="max-w-3xl">
-      <div className="mb-5 flex items-center gap-3">
-        <span className="font-mono text-xs text-acid">[{index}]</span>
-        <span className="h-px w-10 bg-acid/40" />
-        <span className="font-mono text-[11px] uppercase tracking-[0.28em] text-white/45">
+      <div className="mb-5 inline-flex items-center gap-2.5 rounded-full border border-[#6c47ff]/30 bg-[#6c47ff]/10 px-3.5 py-1">
+        <span className="font-mono text-[11px] font-semibold text-[#a78bfa]">{index}</span>
+        <span className="h-3 w-px bg-[#6c47ff]/40" />
+        <span className="text-[12px] font-medium tracking-wide text-zinc-200">
           {kicker}
         </span>
       </div>
-      <h2 className="font-display text-4xl font-semibold leading-[1.04] tracking-tight text-white md:text-[3.4rem]">
+      <h2 className="font-display text-3xl font-semibold leading-[1.08] tracking-[-0.03em] text-white sm:text-4xl md:text-[3.15rem]">
         {title}
       </h2>
-      {desc && <p className="mt-5 text-lg leading-relaxed text-white/55">{desc}</p>}
+      {desc && <p className="mt-4 text-base leading-relaxed text-zinc-400 sm:text-lg">{desc}</p>}
     </Reveal>
   );
 }

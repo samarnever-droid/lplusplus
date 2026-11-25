@@ -390,7 +390,7 @@ export default function Academy() {
                       onClick={() => startLesson(lesson)}
                       className={`px-4 py-1.5 rounded-lg font-mono text-xs font-bold transition-all ${
                         isUnlocked
-                          ? "bg-acid text-ink hover:brightness-110 shadow-md shadow-acid/20"
+                          ? "bg-acid text-white hover:brightness-110 shadow-md shadow-acid/20"
                           : "bg-white/10 text-white/40 cursor-not-allowed"
                       }`}
                     >
@@ -533,7 +533,7 @@ export default function Academy() {
                   {currentStep.type === "theory" && (
                     <button
                       onClick={nextStep}
-                      className="w-full py-3 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                      className="w-full py-3 rounded-xl bg-acid text-white font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
                     >
                       Continue to Exercise →
                     </button>
@@ -551,7 +551,7 @@ export default function Academy() {
                       {feedback?.isCorrect && (
                         <button
                           onClick={nextStep}
-                          className="px-6 py-2.5 rounded-xl bg-acid text-ink font-mono text-xs font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                          className="px-6 py-2.5 rounded-xl bg-acid text-white font-mono text-xs font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
                         >
                           Next Challenge →
                         </button>
@@ -573,7 +573,7 @@ export default function Academy() {
 
                   <button
                     onClick={() => handleCodeRun(currentStep)}
-                    className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-acid text-ink font-mono text-xs font-bold shadow-lg shadow-acid/30 hover:brightness-110 transition-all animate-pulse"
+                    className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-acid text-white font-mono text-xs font-bold shadow-lg shadow-acid/30 hover:brightness-110 transition-all animate-pulse"
                   >
                     <Play className="h-3.5 w-3.5 fill-current" /> ▶ Run Code
                   </button>
@@ -599,7 +599,7 @@ export default function Academy() {
                         <div
                           key={sIdx}
                           className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center justify-between gap-4 ${
-                            sIdx === selectedSuggestionIdx ? "bg-acid text-ink font-bold" : "text-white/80 hover:bg-white/10"
+                            sIdx === selectedSuggestionIdx ? "bg-acid text-white font-bold" : "text-white/80 hover:bg-white/10"
                           }`}
                         >
                           <span>{sug}</span>
@@ -643,7 +643,7 @@ export default function Academy() {
                   {feedback?.isCorrect && currentStep.type === "code" && (
                     <button
                       onClick={nextStep}
-                      className="w-full py-2.5 rounded-xl bg-acid text-ink font-mono text-xs font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                      className="w-full py-2.5 rounded-xl bg-acid text-white font-mono text-xs font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
                     >
                       All Tests Passed! Proceed →
                     </button>
@@ -674,7 +674,7 @@ export default function Academy() {
                   setIsCompletedModal(false);
                   setActiveLesson(null);
                 }}
-                className="w-full py-3 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                className="w-full py-3 rounded-xl bg-acid text-white font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
               >
                 Back to Academy
               </button>

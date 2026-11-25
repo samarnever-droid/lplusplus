@@ -144,7 +144,7 @@ export function PackagesApp() {
       <section className="border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent py-14 px-5">
         <div className="mx-auto max-w-4xl text-center space-y-4">
           <div className="flex flex-wrap items-center justify-center gap-2.5">
-            <span className="rounded-full border border-acid/30 bg-acid/10 px-3.5 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_15px_rgba(200,241,75,0.2)]">
+            <span className="rounded-full border border-acid/30 bg-acid/10 px-3.5 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_15px_rgba(108,71,255,0.2)]">
               <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
               Live Hub &bull; {stats.packages_count} Verified Packages
             </span>
@@ -199,7 +199,7 @@ export function PackagesApp() {
                     onClick={() => setCategory(c.id)}
                     className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2 transition-all ${
                       category === c.id
-                        ? "bg-acid text-ink font-bold shadow-[0_0_15px_rgba(200,241,75,0.3)]"
+                        ? "bg-acid text-white font-bold shadow-[0_0_15px_rgba(108,71,255,0.3)]"
                         : "text-white/70 hover:bg-white/5 hover:text-white"
                     }`}
                   >

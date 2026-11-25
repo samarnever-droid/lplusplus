@@ -101,7 +101,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 onClick={() => setTab("clerk")}
                 className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 font-mono text-xs font-semibold transition-all ${
                   tab === "clerk"
-                    ? "bg-acid text-ink"
+                    ? "clerk-btn-primary"
                     : "text-white/65 hover:text-white"
                 }`}
               >
@@ -112,7 +112,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 onClick={() => setTab("git")}
                 className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 font-mono text-xs font-semibold transition-all ${
                   tab === "git"
-                    ? "bg-acid text-ink"
+                    ? "clerk-btn-primary"
                     : "text-white/65 hover:text-white"
                 }`}
               >
@@ -163,7 +163,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     <div className="flex flex-wrap gap-3">
                       <a
                         href={`${import.meta.env.BASE_URL}account.html`}
-                        className="inline-flex items-center gap-2 rounded-xl bg-acid px-4 py-2.5 font-mono text-xs font-bold text-ink hover:brightness-110"
+                        className="clerk-btn-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs font-semibold"
                       >
                         <Sparkles className="h-3.5 w-3.5" />
                         Open Publisher Studio

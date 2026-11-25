@@ -262,7 +262,7 @@ ${pkgDeps.trim()}
               <div className="flex flex-wrap gap-3">
                 <a
                   href="/packages.html"
-                  className="inline-flex items-center gap-2 rounded-xl bg-acid px-4 py-2.5 font-mono text-xs font-bold text-ink hover:brightness-110"
+                  className="clerk-btn-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs font-semibold"
                 >
                   Browse packages
                   <Package className="h-3.5 w-3.5" />
@@ -317,7 +317,7 @@ ${pkgDeps.trim()}
                     onClick={() => setStudioTab(t.id as typeof studioTab)}
                     className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs font-semibold transition-all ${
                       studioTab === t.id
-                        ? "bg-acid text-ink"
+                        ? "clerk-btn-primary"
                         : "text-white/70 hover:bg-white/5 hover:text-white"
                     }`}
                   >
@@ -408,7 +408,7 @@ ${pkgDeps.trim()}
                       href={githubIssueUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-xl bg-acid px-4 py-2.5 font-mono text-xs font-bold text-ink hover:brightness-110"
+                      className="clerk-btn-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs font-semibold"
                     >
                       <UploadCloud className="h-3.5 w-3.5" />
                       Submit Verified Release Request
@@ -537,7 +537,7 @@ ${pkgDeps.trim()}
                   </div>
                   <button
                     onClick={handleCopySessionJwt}
-                    className="inline-flex items-center gap-2 rounded-xl bg-acid px-4 py-2.5 font-mono text-xs font-bold text-ink hover:brightness-110"
+                    className="clerk-btn-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs font-semibold"
                   >
                     {tokenCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                     {tokenCopied ? "Session JWT Copied!" : "Copy Bearer Session JWT"}

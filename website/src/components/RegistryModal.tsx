@@ -253,7 +253,7 @@ Publish Guide
                   onClick={() => setCategory(c.id)}
                   className={`px-3 py-1 rounded-lg transition-colors whitespace-nowrap ${
                     category === c.id
-                      ? "bg-acid text-ink font-semibold"
+                      ? "bg-acid text-white font-semibold"
                       : "bg-white/5 text-white/60 hover:text-white hover:bg-white/10"
                   }`}
                 >

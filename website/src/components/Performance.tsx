@@ -108,7 +108,7 @@ export default function Performance() {
               onClick={() => setSelectedScenario(i)}
               className={`flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-xs transition-all ${
                 selectedScenario === i
-                  ? "bg-acid text-ink font-bold shadow-[0_0_20px_rgba(200,241,75,0.3)]"
+                  ? "bg-acid text-white font-bold shadow-[0_0_20px_rgba(108,71,255,0.3)]"
                   : "border border-white/10 bg-white/[0.02] text-white/60 hover:border-white/20 hover:text-white"
               }`}
             >
@@ -159,7 +159,7 @@ export default function Performance() {
                         initial={{ width: 0 }}
                         animate={{ width: `${percentage}%` }}
                         transition={{ duration: 0.8, ease: EASE }}
-                        className={`h-full rounded-full ${item.color.split(" ")[0]} ${item.isLpp ? "shadow-[0_0_15px_rgba(200,241,75,0.8)]" : ""}`}
+                        className={`h-full rounded-full ${item.color.split(" ")[0]} ${item.isLpp ? "shadow-[0_0_15px_rgba(108,71,255,0.8)]" : ""}`}
                       />
                     </div>
                   </div>

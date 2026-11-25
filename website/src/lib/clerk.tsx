@@ -21,31 +21,33 @@ export function getClerkPublishableKey(): string {
 
 export const CLERK_APPEARANCE = {
   variables: {
-    colorPrimary: "#c8ff2e",
-    colorTextOnPrimaryBackground: "#07090d",
-    colorBackground: "#0b0f17",
-    colorInputBackground: "#05070a",
-    colorInputText: "#ffffff",
-    colorText: "#ffffff",
-    colorTextSecondary: "#9ca3af",
-    colorNeutral: "#e5e7eb",
-    borderRadius: "0.85rem",
+    colorPrimary: "#6c47ff",
+    colorTextOnPrimaryBackground: "#ffffff",
+    colorBackground: "#111116",
+    colorInputBackground: "#09090b",
+    colorInputText: "#f4f4f5",
+    colorText: "#f4f4f5",
+    colorTextSecondary: "#a1a1aa",
+    colorNeutral: "#e4e4e7",
+    borderRadius: "0.75rem",
     fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
   },
   elements: {
-    card: "bg-[#0b0f17] border border-white/10 shadow-2xl",
-    headerTitle: "text-white font-mono",
-    headerSubtitle: "text-white/60",
+    card: "bg-[#111116] border border-white/10 shadow-2xl",
+    headerTitle: "text-white font-semibold tracking-tight",
+    headerSubtitle: "text-zinc-400",
     socialButtonsBlockButton:
-      "bg-white/5 border border-white/10 text-white hover:bg-white/10",
+      "bg-white/[0.04] border border-white/10 text-white hover:bg-white/[0.08]",
     formFieldInput:
-      "bg-[#05070a] border border-white/15 text-white focus:border-[#c8ff2e]",
+      "bg-[#09090b] border border-white/15 text-white focus:border-[#6c47ff]",
     formButtonPrimary:
-      "bg-[#c8ff2e] text-[#07090d] font-mono font-bold hover:brightness-110",
-    footerActionLink: "text-[#c8ff2e] hover:brightness-110",
-    userButtonPopoverCard: "bg-[#0b0f17] border border-white/10",
-    userButtonPopoverActionButton: "text-white/80 hover:bg-white/5",
-    userButtonPopoverActionButtonText: "text-white/85",
+      "bg-[#6c47ff] text-white font-medium hover:bg-[#7c5cff] shadow-lg shadow-[#6c47ff]/25",
+    footerActionLink: "text-[#a78bfa] hover:text-white",
+    userButtonPopoverCard: "bg-[#111116] border border-white/10",
+    userButtonPopoverActionButton: "text-zinc-200 hover:bg-white/5",
+    userButtonPopoverActionButtonText: "text-zinc-200",
+    organizationSwitcherTrigger:
+      "border border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5",
   },
 };
 

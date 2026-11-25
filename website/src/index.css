@@ -1,17 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --color-ink: #07080a;
-  --color-panel: #0c0e11;
-  --color-panel2: #101318;
-  --color-acid: #c8f14b;
-  --color-lav: #b7a3f5;
-  --color-aqua: #5fe3cf;
-  --color-ember: #f2c14e;
+  /* Clerk-inspired obsidian & electric indigo design system */
+  --color-ink: #09090b;
+  --color-panel: #111116;
+  --color-panel2: #17171f;
+  --color-acid: #8b6bff;
+  --color-clerk: #6c47ff;
+  --color-lav: #a78bfa;
+  --color-aqua: #38bdf8;
+  --color-ember: #f59e0b;
 
   --animate-marquee: marquee 30s linear infinite;
   --animate-blink: blink 1.05s step-end infinite;
@@ -33,8 +35,8 @@
     100% { top: 100%; opacity: 0; }
   }
   @keyframes pulseDot {
-    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(200 241 75 / 0.5); }
-    50% { opacity: 0.6; box-shadow: 0 0 0 6px rgb(200 241 75 / 0); }
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(108 71 255 / 0.55); }
+    50% { opacity: 0.65; box-shadow: 0 0 0 6px rgb(108 71 255 / 0); }
   }
 }
 
@@ -45,15 +47,15 @@ html {
 
 body {
   background: var(--color-ink);
-  color: #e8eaee;
+  color: #f4f4f5;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
 
 ::selection {
-  background: var(--color-acid);
-  color: #07080a;
+  background: #6c47ff;
+  color: #ffffff;
 }
 
 ::-webkit-scrollbar {
@@ -61,33 +63,53 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0b0d;
+  background: #09090b;
 }
 ::-webkit-scrollbar-thumb {
-  background: #23262c;
+  background: #27272a;
   border-radius: 8px;
-  border: 2px solid #0a0b0d;
+  border: 2px solid #09090b;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #33373f;
+  background: #3f3f46;
 }
 
-/* faint blueprint grid */
+/* Clerk-style subtle architectural dot & hairline grids */
 .bg-grid {
   background-image:
-    linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(255 255 255 / 0.035) 1px, transparent 1px);
-  background-size: 56px 56px;
+    radial-gradient(rgb(255 255 255 / 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 .bg-grid-fine {
   background-image:
-    linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
-  background-size: 28px 28px;
+    linear-gradient(to right, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 
-/* film grain */
+/* Clerk-style elevated card with top specular edge */
+.clerk-card {
+  background: linear-gradient(180deg, rgba(24, 24, 32, 0.92) 0%, rgba(17, 17, 22, 0.96) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    0 20px 50px -20px rgba(0, 0, 0, 0.75);
+}
+
+.clerk-btn-primary {
+  background: linear-gradient(180deg, #7c5cff 0%, #6c47ff 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 8px 24px -6px rgba(108, 71, 255, 0.55);
+}
+.clerk-btn-primary:hover {
+  background: linear-gradient(180deg, #8b6bff 0%, #7552ff 100%);
+}
+
+/* subtle ambient noise */
 .noise::after {
   content: "";
   position: fixed;
@@ -95,12 +117,12 @@ body {
   z-index: 70;
   pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 300 300' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  opacity: 0.032;
+  opacity: 0.018;
 }
 
 .text-outline {
   color: transparent;
-  -webkit-text-stroke: 1.5px rgb(232 234 238 / 0.85);
+  -webkit-text-stroke: 1.5px rgb(244 244 245 / 0.85);
 }
 
 @media (min-width: 768px) {
@@ -110,7 +132,7 @@ body {
 }
 
 .glow-acid {
-  box-shadow: 0 0 24px rgb(200 241 75 / 0.35), 0 0 80px rgb(200 241 75 / 0.12);
+  box-shadow: 0 0 28px rgb(108 71 255 / 0.4), 0 0 90px rgb(108 71 255 / 0.16);
 }
 
 .mask-fade-x {

@@ -1,417 +1,345 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Terminal,
+  ArrowRight,
   Check,
   Copy,
-  Sparkles,
-  Zap,
-  ShieldCheck,
-  Package,
-  Layers,
-  ArrowUpRight,
-  Play,
-  FileCode,
   Cpu,
+  Lock,
+  Package,
+  Play,
+  Sparkles,
+  Terminal,
 } from "lucide-react";
-import { Code } from "../lib/highlight";
 import { EASE } from "../lib/ui";
 
-interface CodeTab {
-  id: string;
-  name: string;
-  badge: string;
-  code: string;
-  stdout: string;
-  ir: string;
-  escapeLog: { name: string; type: string; dest: string; color: string }[];
-}
-
-const TABS: CodeTab[] = [
+const CODE_TABS = [
   {
-    id: "fib",
-    name: "fibonacci.lpp",
-    badge: "Direct AOT",
-    code: `def fib(n: Int) -> Int:
-    if n < 2:
-        return n
-    return fib(n - 1) + fib(n - 2)
+    id: "capabilities",
+    label: "capabilities.lpp",
+    badge: "@pure & @deny",
+    code: `# Zero-runtime-cost capability security
+@pure
+def hash_slice(s: Str, k: Int) -> Int:
+    head := s[0..5]
+    return (len(head) * 8) + (k ** 2)
+
+@deny(fs, net, exec, ffi, unsafe)
+def render_tag(name: Str, active: Bool) -> Str:
+    status := "live" if active else "idle"
+    return f"{name[..6]}:{status}"
 
 def main():
-    result := fib(35)
-    print("fib(35) =", result)`,
-    stdout: `[L++] Compiling with Cranelift AOT...
-[L++] Native executable linked
-fib(35) = 9227465`,
-    ir: `function u0:0(i64) -> i64 fast {
-block0(v0: i64):
-    v1 = iconst.i64 2
-    v2 = icmp slt v0, v1
-    brif v2, block1, block2
-block1:
-    return v0
-block2:
-    v3 = iadd_imm v0, -1
-    v4 = call u0:0(v3)
-    v5 = iadd_imm v0, -2
-    v6 = call u0:0(v5)
-    v7 = iadd v4, v6
-    return v7
-}`,
-    escapeLog: [
-      { name: "n", type: "Int · scalar", dest: "CPU Register / Stack", color: "text-acid" },
-      { name: "result", type: "Int · scalar", dest: "Stack (Zero Heap)", color: "text-acid" },
+    print(hash_slice("lplusplus", 5))
+    print_str(render_tag("kernel_v3", true))`,
+    output: [
+      "$ lpp capabilities.lpp --run",
+      "65",
+      "kernel:live",
+      "✓ Verified @pure & @deny transitively · 0.9ms native build",
     ],
   },
   {
-    id: "memory",
-    name: "hybrid_memory.lpp",
-    badge: "ARC & Escape",
-    code: `struct Item:
-    id: Int
-    name: Str
+    id: "keel",
+    label: "keel.sh",
+    badge: "Keel + Registry",
+    code: `# Create, verify & run with Keel package manager
+keel new my-service && cd my-service
 
-def create_item(id: Int, name: Str) -> Item:
-    item := Item(id, name)
-    return item  # escapes this frame
+# Search & install from the canonical git registry
+keel search semver
+keel add lpp-semver
+keel install && keel verify
 
-def main():
-    item := create_item(101, "Server Cluster")
-    print_str(item.name)`,
-    stdout: `[L++] ownership: item -> Owned
-[L++] ownership balance verified
-Server Cluster`,
-    ir: `ownership-plan v1
-  item: frame -> owned
-  contains: Item -> Str
-  balance: verified`,
-    escapeLog: [
-      { name: "id", type: "Int · scalar", dest: "Frame", color: "text-acid" },
-      { name: "item", type: "struct · escapes", dest: "Owned", color: "text-lav" },
+# Incremental multi-backend build (Cranelift / LLVM / WASM)
+keel build && keel run`,
+    output: [
+      "resolved 1 package(s) → Keel.lock",
+      "lpp-semver 1.0.0  ed937ef36169  ok",
+      "build OK (1 package(s))",
+      "Hello from L++",
     ],
   },
   {
-    id: "match",
-    name: "result_match.lpp",
-    badge: "Typed Match",
-    code: `enum Result:
-    Ready(message: Str)
-    Failed(code: Int)
-
-def report(result: Result):
-    match result:
-        Ready(message):
-            print_str(message)
-        Failed(code):
-            print(code)
-
-def main():
-    report(Result.Ready("ready"))`,
-    stdout: `[L++] exhaustive match verified
-ready`,
-    ir: `switch_variant result
-  Ready(message) -> print_str(message)
-  Failed(code)   -> print(code)`,
-    escapeLog: [
-      { name: "result", type: "enum · local", dest: "Frame", color: "text-acid" },
-      { name: "message", type: "Str · payload", dest: "Borrowed call", color: "text-lav" },
-    ],
-  },
-  {
-    id: "wasm",
-    name: "portable_lists.lpp",
-    badge: "Native + WASM",
-    code: `def sum(values: List[Int]) -> Int:
-    mut total := 0
-    for value in values:
-        total = total + value
-    return total
-
-def main():
-    values := [10, 20, 30]
-    print(sum(values))`,
-    stdout: `[L++] emitted validated wasm32-wasip1 module
-60`,
-    ir: `values = list [10, 20, 30]
-for value in values:
-  total = total + value
-return total`,
-    escapeLog: [
-      { name: "values", type: "List[Int]", dest: "Owned", color: "text-lav" },
-      { name: "total", type: "Int · scalar", dest: "Frame", color: "text-acid" },
+    id: "kernel",
+    label: "kernel.lpp",
+    badge: "Bare-Metal OS",
+    code: `# Principled unsafe & x86_64-unknown-none ELF kernels
+@export_name("_start")
+@section(".text.boot")
+unsafe def kmain() -> Void:
+    vga := (0xB8000 as USize) as Ptr[U16]
+    ptr_write[U16](vga, (0x0F4C as U16))
+    port_out8(0x3F8 as U16, 0x4C as U8)
+    cpu_hlt()`,
+    output: [
+      "$ lpp kernel.lpp --target x86_64-unknown-none --multiboot2 -o kernel.elf",
+      "✓ Linked static freestanding ELF64 (lpp-link)",
+      "✓ 0 runtime dependencies · 0 GC pauses",
     ],
   },
 ];
 
+const INSTALL_TABS = [
+  {
+    id: "unix",
+    label: "macOS / Linux",
+    cmd: "curl -fsSL https://lplusplus.bond/install.sh | sh",
+  },
+  {
+    id: "win",
+    label: "Windows",
+    cmd: "irm https://lplusplus.bond/install.ps1 | iex",
+  },
+  {
+    id: "source",
+    label: "Source",
+    cmd: "git clone --depth 1 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
+  },
+];
+
+const METRICS = [
+  { label: "Compile Backends", value: "Cranelift · LLVM · WASM" },
+  { label: "Corpus Pass Rate", value: "193 / 193 (100%)" },
+  { label: "Workspace Tests", value: "894 Passing" },
+  { label: "GC Pauses", value: "0 ms (Deterministic)" },
+];
+
 export default function Hero() {
-  const [activeTab, setActiveTab] = useState(0);
-  const [viewMode, setViewMode] = useState<"code" | "ir" | "stdout">("code");
-  const [isRunning, setIsRunning] = useState(false);
-  const [copiedInstall, setCopiedInstall] = useState<string | null>(null);
-  const [osTab, setOsTab] = useState<"curl" | "powershell" | "cargo">("curl");
+  const [codeTab, setCodeTab] = useState(0);
+  const [installTab, setInstallTab] = useState(0);
+  const [copied, setCopied] = useState(false);
 
-  const tab = TABS[activeTab];
+  const activeCode = CODE_TABS[codeTab];
+  const activeInstall = INSTALL_TABS[installTab];
 
-  const handleRun = () => {
-    setIsRunning(true);
-    setViewMode("stdout");
-    setTimeout(() => {
-      setIsRunning(false);
-    }, 450);
-  };
-
-  const copyText = (txt: string, id: string) => {
-    navigator.clipboard.writeText(txt);
-    setCopiedInstall(id);
-    setTimeout(() => setCopiedInstall(null), 2000);
-  };
-
-  const installCommands = {
-    curl: "curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/main/install.sh | sh",
-    powershell: "irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/main/install.ps1 | iex",
-    cargo: "git clone --depth 1 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
+  const copyInstall = async () => {
+    try {
+      await navigator.clipboard.writeText(activeInstall.cmd);
+    } catch {
+      /* ignore */
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
   };
 
   return (
     <section id="top" className="relative overflow-hidden pt-28 pb-20 md:pt-36 md:pb-28">
-      {/* Background Ambient Glows */}
-      <div className="pointer-events-none absolute -top-40 left-1/2 h-[600px] w-[1000px] -translate-x-1/2 rounded-full bg-acid/[0.08] blur-[150px]" />
-      <div className="pointer-events-none absolute -right-40 top-1/3 h-[500px] w-[500px] rounded-full bg-lav/[0.06] blur-[140px]" />
-      <div className="pointer-events-none absolute -left-40 bottom-10 h-[450px] w-[450px] rounded-full bg-aqua/[0.05] blur-[130px]" />
+      {/* Clerk-inspired dot grid + electric indigo top aurora */}
+      <div className="pointer-events-none absolute inset-0 bg-grid opacity-55 [mask-image:radial-gradient(ellipse_at_top,black_30%,transparent_75%)]" />
+      <div className="pointer-events-none absolute -top-48 left-1/2 h-[520px] w-[960px] -translate-x-1/2 rounded-full bg-[#6c47ff]/20 blur-[140px]" />
+      <div className="pointer-events-none absolute top-40 right-0 h-[360px] w-[360px] rounded-full bg-[#38bdf8]/10 blur-[130px]" />
 
       <div className="relative mx-auto max-w-7xl px-5 md:px-8">
         <div className="grid items-center gap-12 lg:grid-cols-12">
-          {/* Left Column: Value Prop & Headlines */}
-          <div className="lg:col-span-6 space-y-7">
-            {/* Version Badge */}
-            <motion.div
-              initial={{ opacity: 0, y: 15 }}
+          {/* Left Column */}
+          <div className="space-y-7 lg:col-span-6">
+            <motion.a
+              href="#install"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, ease: EASE }}
-              className="inline-flex items-center gap-3 rounded-full border border-white/15 bg-white/[0.03] py-1.5 pl-2 pr-4 shadow-xl backdrop-blur-md"
+              transition={{ duration: 0.55, ease: EASE }}
+              className="group inline-flex items-center gap-2 rounded-full border border-[#6c47ff]/35 bg-[#6c47ff]/10 px-3.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-[#6c47ff]/60 hover:bg-[#6c47ff]/15"
             >
-              <span className="flex items-center gap-1.5 rounded-full bg-acid/20 px-3 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wider text-acid border border-acid/30">
-                <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
-                L++ v0.3.2
+              <span className="h-2 w-2 rounded-full bg-[#8b6bff] animate-pulse-dot" />
+              <span className="font-mono text-[#a78bfa]">v0.3.2</span>
+              <span className="text-zinc-500">·</span>
+              <span>@pure/@deny Security, Algebraic MIR &amp; Keel</span>
+              <ArrowRight className="h-3.5 w-3.5 text-[#a78bfa] transition-transform group-hover:translate-x-0.5" />
+            </motion.a>
+
+            <motion.h1
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.65, delay: 0.08, ease: EASE }}
+              className="font-display text-4xl font-semibold leading-[1.04] tracking-[-0.035em] text-white sm:text-5xl lg:text-[3.75rem]"
+            >
+              The systems language built for{" "}
+              <span className="bg-gradient-to-r from-[#a78bfa] via-[#7c5cff] to-[#38bdf8] bg-clip-text text-transparent">
+                deterministic speed
               </span>
-              <span className="font-mono text-xs text-white/70">
-                Readable &bull; Native &bull; Safety-first
-              </span>
-            </motion.div>
+              .
+            </motion.h1>
 
-            {/* Typography Master Headline */}
-            <div className="space-y-2">
-              <h1 className="font-mono text-4xl sm:text-6xl font-black tracking-tight text-white leading-[1.08]">
-                Readable by design.
-                <br />
-                <span className="text-acid">Native by default.</span>
-                <br />
-                <span className="text-white/55">Safety engineered in.</span>
-              </h1>
-            </div>
+            <motion.p
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.65, delay: 0.14, ease: EASE }}
+              className="max-w-xl text-base leading-relaxed text-zinc-400 sm:text-lg"
+            >
+              Python-clean syntax compiled straight to native binaries via{" "}
+              <span className="text-zinc-200">Cranelift</span>,{" "}
+              <span className="text-zinc-200">LLVM</span>, and{" "}
+              <span className="text-zinc-200">WebAssembly</span>. Zero GC pauses, compile-time{" "}
+              <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs text-[#a78bfa]">
+                @pure
+              </code>{" "}
+              capability sandboxing, bare-metal OS primitives, and the{" "}
+              <span className="text-zinc-200">Keel</span> package manager.
+            </motion.p>
 
-            <p className="text-base sm:text-lg leading-relaxed text-white/65 max-w-xl font-sans">
-              L++ brings Python-like clarity to a statically typed, ahead-of-time language. Ownership analysis
-              places values as frame, owned, or shared and catches common ownership mistakes before code
-              generation—without a tracing garbage collector.
-            </p>
-
-            {/* Quick OS Install Switcher */}
-            <div className="space-y-2 pt-2">
-              <div className="flex items-center gap-2">
-                {(["curl", "powershell", "cargo"] as const).map((os) => (
-                  <button
-                    key={os}
-                    onClick={() => setOsTab(os)}
-                    className={`rounded-lg px-3 py-1 font-mono text-xs font-semibold uppercase tracking-wider transition-all ${
-                      osTab === os
-                        ? "bg-white/15 text-acid border border-acid/40"
-                        : "text-white/50 hover:text-white/90"
-                    }`}
-                  >
-                    {os === "curl" ? "Linux / macOS" : os === "powershell" ? "Windows" : "Cargo"}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-white/15 bg-black/80 p-3.5 shadow-2xl backdrop-blur-xl">
-                <div className="flex items-center gap-2 overflow-x-auto text-xs font-mono text-white/90">
-                  <Terminal className="h-4 w-4 shrink-0 text-acid" />
-                  <code className="whitespace-nowrap">{installCommands[osTab]}</code>
-                </div>
-                <button
-                  onClick={() => copyText(installCommands[osTab], `install-${osTab}`)}
-                  className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 font-mono text-xs text-white hover:bg-white/20 shrink-0"
-                >
-                  {copiedInstall === `install-${osTab}` ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                  {copiedInstall === `install-${osTab}` ? "Copied" : "Copy"}
-                </button>
-              </div>
-            </div>
-
-            {/* Call to Actions */}
-            <div className="flex flex-wrap items-center gap-4 pt-2">
+            {/* Primary CTAs */}
+            <motion.div
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.65, delay: 0.2, ease: EASE }}
+              className="flex flex-wrap items-center gap-3"
+            >
               <a
-                href={`${import.meta.env.BASE_URL}academy.html`}
-                className="flex items-center gap-2 rounded-xl bg-acid px-6 py-3.5 font-mono text-sm font-bold text-ink transition-all hover:brightness-110 shadow-[0_0_30px_rgba(200,241,75,0.35)]"
+                href="#install"
+                className="clerk-btn-primary inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-medium transition-all"
               >
-                <Sparkles className="h-4 w-4" />
-                Launch Academy Playground
+                <Terminal className="h-4 w-4" />
+                Install L++ &amp; Keel
+                <ArrowRight className="h-4 w-4" />
+              </a>
+              <a
+                href={`${import.meta.env.BASE_URL}account.html`}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-medium text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+              >
+                <Sparkles className="h-4 w-4 text-[#a78bfa]" />
+                Publisher Studio
               </a>
               <a
                 href={`${import.meta.env.BASE_URL}packages.html`}
-                className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-6 py-3.5 font-mono text-sm font-semibold text-white hover:border-acid/40 hover:text-acid transition-all"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-transparent px-4 py-3 text-sm font-medium text-zinc-400 transition-colors hover:border-white/15 hover:text-white"
               >
                 <Package className="h-4 w-4" />
-                Browse 16 Packages
-                <ArrowUpRight className="h-4 w-4" />
+                Packages
               </a>
-            </div>
+            </motion.div>
 
-            {/* Live Telemetry Tickers */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-white/10 text-xs font-mono">
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">Compilation</span>
-                <span className="font-bold text-acid text-sm sm:text-base">Native AOT</span>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">Ownership</span>
-                <span className="font-bold text-emerald-400 text-[11px] sm:text-xs">Frame · Owned · Shared</span>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">WASM Corpus</span>
-                <span className="font-bold text-white text-sm sm:text-base">24 / 24</span>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">Tracing GC</span>
-                <span className="font-bold text-lav text-sm sm:text-base">None</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Interactive Code Workbench */}
-          <div className="lg:col-span-6 space-y-4">
-            <div className="overflow-hidden rounded-2xl border border-white/15 bg-[#0b0e14] shadow-[0_30px_90px_rgba(0,0,0,0.8)] backdrop-blur-xl">
-              {/* Tab Bar */}
-              <div className="flex items-center justify-between border-b border-white/10 bg-black/60 px-4 py-2.5">
-                <div className="flex items-center gap-1.5 overflow-x-auto">
-                  {TABS.map((t, i) => (
+            {/* Clerk-style compact installer widget */}
+            <motion.div
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.65, delay: 0.26, ease: EASE }}
+              className="clerk-card overflow-hidden rounded-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-white/[0.07] px-3 py-2">
+                <div className="flex items-center gap-1">
+                  {INSTALL_TABS.map((t, idx) => (
                     <button
                       key={t.id}
-                      onClick={() => {
-                        setActiveTab(i);
-                        setViewMode("code");
-                      }}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs transition-all ${
-                        activeTab === i
-                          ? "bg-white/15 text-white font-bold border border-white/20"
-                          : "text-white/45 hover:text-white hover:bg-white/5"
+                      onClick={() => setInstallTab(idx)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                        installTab === idx
+                          ? "bg-[#6c47ff]/20 text-white"
+                          : "text-zinc-400 hover:text-zinc-200"
                       }`}
                     >
-                      <span>{t.name}</span>
-                      <span className="rounded bg-acid/15 px-1.5 py-0.2 text-[9px] text-acid font-semibold uppercase">
-                        {t.badge}
-                      </span>
+                      {t.label}
                     </button>
                   ))}
                 </div>
-
                 <button
-                  onClick={handleRun}
-                  disabled={isRunning}
-                  className="flex items-center gap-1.5 rounded-lg bg-acid px-3 py-1.5 font-mono text-xs font-bold text-ink hover:brightness-110 shadow-md shrink-0"
+                  onClick={copyInstall}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] text-zinc-300 transition-colors hover:border-[#6c47ff]/50 hover:text-white"
                 >
-                  <Play className={`h-3.5 w-3.5 ${isRunning ? "animate-spin" : "fill-current"}`} />
-                  {isRunning ? "Running..." : "Run L++"}
+                  {copied ? (
+                    <Check className="h-3 w-3 text-emerald-400" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                  {copied ? "Copied" : "Copy"}
                 </button>
               </div>
+              <div className="overflow-x-auto bg-[#09090b]/80 px-4 py-3 font-mono text-xs text-zinc-200">
+                <span className="mr-2 select-none text-[#8b6bff]">$</span>
+                {activeInstall.cmd}
+              </div>
+            </motion.div>
+          </div>
 
-              {/* View Mode Toggle: Source / IR / Output */}
-              <div className="flex items-center justify-between border-b border-white/10 bg-black/30 px-4 py-2 text-[11px] font-mono text-white/50">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setViewMode("code")}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded ${
-                      viewMode === "code" ? "bg-white/15 text-white font-bold" : "hover:text-white"
-                    }`}
-                  >
-                    <FileCode className="h-3 w-3" />
-                    Source Code
-                  </button>
-                  <button
-                    onClick={() => setViewMode("ir")}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded ${
-                      viewMode === "ir" ? "bg-white/15 text-white font-bold" : "hover:text-white"
-                    }`}
-                  >
-                    <Cpu className="h-3 w-3" />
-                    Cranelift IR
-                  </button>
-                  <button
-                    onClick={() => setViewMode("stdout")}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded ${
-                      viewMode === "stdout" ? "bg-white/15 text-acid font-bold" : "hover:text-white"
-                    }`}
-                  >
-                    <Terminal className="h-3 w-3" />
-                    Execution Output
-                  </button>
+          {/* Right Column: Interactive Clerk-Style IDE Card */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.75, delay: 0.16, ease: EASE }}
+            className="lg:col-span-6"
+          >
+            <div className="clerk-card overflow-hidden rounded-2xl">
+              {/* IDE Window Header */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] bg-white/[0.02] px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
                 </div>
-
-                <span className="text-[10px] text-white/30 hidden sm:inline">
-                  Direct Target: x86-64 Native
+                <div className="flex items-center gap-1">
+                  {CODE_TABS.map((tab, idx) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setCodeTab(idx)}
+                      className={`rounded-lg px-2.5 py-1 font-mono text-[11px] transition-all ${
+                        codeTab === idx
+                          ? "border border-[#6c47ff]/40 bg-[#6c47ff]/15 text-white"
+                          : "border border-transparent text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 font-mono text-[10px] text-[#a78bfa] sm:inline-block">
+                  {activeCode.badge}
                 </span>
               </div>
 
-              {/* Editor Window */}
-              <div className="relative min-h-[300px] p-5 font-mono text-[13px] leading-[1.8] overflow-x-auto bg-[#07090d]">
-                {viewMode === "code" && (
-                  <pre className="whitespace-pre">
-                    <Code src={tab.code} />
-                  </pre>
-                )}
+              {/* Code View */}
+              <pre className="code-scroll overflow-x-auto bg-[#09090b]/90 p-5 font-mono text-[12.5px] leading-6 text-zinc-200">
+                <code>{activeCode.code}</code>
+              </pre>
 
-                {viewMode === "ir" && (
-                  <pre className="whitespace-pre text-white/75 text-[12px] leading-relaxed">
-                    {tab.ir}
-                  </pre>
-                )}
-
-                {viewMode === "stdout" && (
-                  <pre className="whitespace-pre text-acid text-[12px] leading-relaxed font-mono">
-                    {tab.stdout}
-                  </pre>
-                )}
-              </div>
-
-              {/* Escape Analysis HUD Footer */}
-              <div className="border-t border-white/10 bg-black/60 p-4 space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-white/40">
-                  <span className="flex items-center gap-1.5">
-                    <Layers className="h-3.5 w-3.5 text-acid" />
-                    Escape Analysis Side-Table (0.3 ms)
+              {/* Terminal Output Footer */}
+              <div className="border-t border-white/[0.08] bg-[#111116] px-5 py-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-zinc-400">
+                    <Play className="h-3 w-3 text-[#8b6bff]" />
+                    Output
                   </span>
-                  <span className="text-acid">Zero GC Pause</span>
+                  <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-400">
+                    <Lock className="h-3 w-3" />
+                    Deterministic
+                  </span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {tab.escapeLog.map((log) => (
+                <div className="space-y-1 font-mono text-xs">
+                  {activeCode.output.map((line, i) => (
                     <div
-                      key={log.name}
-                      className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-3 py-1.5 text-xs font-mono"
+                      key={i}
+                      className={
+                        line.startsWith("$")
+                          ? "text-zinc-400"
+                          : line.startsWith("✓")
+                            ? "text-emerald-400"
+                            : "text-zinc-200"
+                      }
                     >
-                      <span className="text-white font-bold">{log.name}</span>
-                      <span className="text-white/40 text-[10px]">{log.type}</span>
-                      <span className={`font-semibold text-[11px] ${log.color}`}>{log.dest}</span>
+                      {line}
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-          </div>
+
+            {/* Trust Strip */}
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {METRICS.map((m) => (
+                <div
+                  key={m.label}
+                  className="rounded-xl border border-white/[0.07] bg-white/[0.025] px-3.5 py-2.5"
+                >
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                    {m.label}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 font-mono text-xs font-semibold text-zinc-200">
+                    <Cpu className="h-3 w-3 text-[#8b6bff] shrink-0" />
+                    <span className="truncate">{m.value}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
         </div>
       </div>
     </section>
