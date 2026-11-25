@@ -1,6 +1,6 @@
 # Current capabilities
 
-**Last updated for v0.3.1 (`v0.3-dev`);** remaining historical gate counts below reflect their dated snapshots unless marked current. This file is a compact index; current roadmap status is tracked in [ROADMAP.md](../ROADMAP.md) and `v0.3.1` release notes in [V0.3.1.md](release/V0.3.1.md).
+**Last updated for v0.3.2 (`v0.3-dev`);** remaining historical gate counts below reflect their dated snapshots unless marked current. This file is a compact index; current roadmap status is tracked in [ROADMAP.md](../ROADMAP.md) and `v0.3.2` release notes in [V0.3.2.md](release/V0.3.2.md).
 
 ## Compiler
 

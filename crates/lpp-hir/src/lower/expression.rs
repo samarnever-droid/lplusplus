@@ -27,7 +27,32 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 origin,
             });
         }
-        self.parse_binary(cursor, 1, closure_body)
+        let then_expr = self.parse_binary(cursor, 1, closure_body)?;
+        if self.consume_keyword(cursor, Keyword::If) {
+            let condition = self.parse_expression(cursor, closure_body)?;
+            self.expect_keyword(
+                cursor,
+                Keyword::Else,
+                "expected 'else' in conditional expression",
+            )?;
+            let else_expr = self.parse_expression(cursor, closure_body)?;
+            let then_span = self.package.origins[self.package.expressions[then_expr].origin].span;
+            let else_span = self.package.origins[self.package.expressions[else_expr].origin].span;
+            let origin = self.source_origin(Span {
+                file: then_span.file,
+                start: then_span.start,
+                end: else_span.end,
+            })?;
+            return self.alloc_expression(Expression {
+                kind: ExpressionKind::Conditional {
+                    condition,
+                    then_expr,
+                    else_expr,
+                },
+                origin,
+            });
+        }
+        Ok(then_expr)
     }
 
     fn parse_binary(
@@ -92,7 +117,9 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
     ) -> LowerResult<ExprId> {
         let operator = match self.peek_kind(cursor) {
             Some(TokenKind::Minus) => Some(UnaryOperator::Negate),
+            Some(TokenKind::Plus) => Some(UnaryOperator::Plus),
             Some(TokenKind::Not) => Some(UnaryOperator::Not),
+            Some(TokenKind::BitNot) => Some(UnaryOperator::BitNot),
             _ => None,
         };
         if let Some(operator) = operator {
@@ -135,15 +162,20 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let kind = match token.kind {
             TokenKind::Integer => {
                 let raw = self.token_text(token);
-                let text = if raw.contains('_') {
-                    Cow::Owned(raw.replace('_', ""))
+                let (digits, suffix_type) = split_int_suffix(raw);
+                let text = if digits.contains('_') {
+                    Cow::Owned(digits.replace('_', ""))
                 } else {
-                    Cow::Borrowed(raw)
+                    Cow::Borrowed(digits)
                 };
                 let value = if let Some(hex) =
                     text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"))
                 {
                     i64::from_str_radix(hex, 16)
+                } else if let Some(octal) =
+                    text.strip_prefix("0o").or_else(|| text.strip_prefix("0O"))
+                {
+                    i64::from_str_radix(octal, 8)
                 } else if let Some(binary) =
                     text.strip_prefix("0b").or_else(|| text.strip_prefix("0B"))
                 {
@@ -152,24 +184,40 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                     text.parse::<i64>()
                 }
                 .map_err(|_| LowerError::new("E3104", "invalid integer literal", token.span))?;
+                if let Some(target_name) = suffix_type {
+                    let origin = self.source_origin(token.span)?;
+                    let lit = self.alloc_expression(Expression {
+                        kind: ExpressionKind::Literal(Literal::Integer(value)),
+                        origin,
+                    })?;
+                    let target = self.named_type(target_name, token.span)?;
+                    return self.alloc_expression(Expression {
+                        kind: ExpressionKind::Cast { value: lit, target },
+                        origin,
+                    });
+                }
                 ExpressionKind::Literal(Literal::Integer(value))
             }
             TokenKind::Float => {
                 let raw = self.token_text(token);
-                let text = if raw.contains('_') {
-                    Cow::Owned(raw.replace('_', ""))
+                let digits = raw.strip_suffix("f64").unwrap_or(raw);
+                let text = if digits.contains('_') {
+                    Cow::Owned(digits.replace('_', ""))
                 } else {
-                    Cow::Borrowed(raw)
+                    Cow::Borrowed(digits)
                 };
                 let value = text
                     .parse::<f64>()
-                    .map_err(|_| LowerError::new("E3104", "invalid float literal", token.span))?;
+                    .ok()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| LowerError::new("E3104", "invalid float literal", token.span))?;
                 ExpressionKind::Literal(Literal::FloatBits(value.to_bits()))
             }
             TokenKind::String => ExpressionKind::Literal(Literal::String {
                 span: token.span,
                 formatted: false,
             }),
+            TokenKind::RawString => ExpressionKind::Literal(Literal::RawString(token.span)),
             TokenKind::Character => ExpressionKind::Literal(Literal::Character(token.span)),
             TokenKind::Bool => {
                 ExpressionKind::Literal(Literal::Bool(self.token_text(token) == "true"))
@@ -192,7 +240,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 let first = self.parse_expression(cursor, closure_body)?;
                 if self.consume(cursor, TokenKind::Comma) {
                     let mut elements = vec![first];
-                    loop {
+                    while self.peek_kind(cursor) != Some(TokenKind::RightParen) {
                         elements.push(self.parse_expression(cursor, closure_body)?);
                         if !self.consume(cursor, TokenKind::Comma) {
                             break;
@@ -233,12 +281,10 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             }
             TokenKind::LeftBracket => {
                 let mut elements = Vec::new();
-                if self.peek_kind(cursor) != Some(TokenKind::RightBracket) {
-                    loop {
-                        elements.push(self.parse_expression(cursor, closure_body)?);
-                        if !self.consume(cursor, TokenKind::Comma) {
-                            break;
-                        }
+                while self.peek_kind(cursor) != Some(TokenKind::RightBracket) {
+                    elements.push(self.parse_expression(cursor, closure_body)?);
+                    if !self.consume(cursor, TokenKind::Comma) {
+                        break;
                     }
                 }
                 let close = self.expect(
@@ -282,28 +328,44 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let file = token.span.file;
         // The token text is `f"..."`; the interior lives at byte range
         // [2, len-1) — after the `f"` prefix and before the closing quote.
-        if full.len() < 3 {
-            return Err(LowerError::new(
-                "E3104",
-                "invalid formatted string",
-                token.span,
-            ));
-        }
+        let triple = full.starts_with("f\"\"\"") && full.ends_with("\"\"\"") && full.len() >= 7;
+        let (content_start, end_idx) = if triple {
+            (4usize, full.len() - 3)
+        } else {
+            if full.len() < 3 {
+                return Err(LowerError::new(
+                    "E3104",
+                    "invalid formatted string",
+                    token.span,
+                ));
+            }
+            (2usize, full.len() - 1)
+        };
         let bytes = full.as_bytes();
-        let end_idx = full.len() - 1;
         let seg_span = |start: usize, end: usize| Span {
             file,
             start: base + start as u32,
             end: base + end as u32,
         };
         let mut parts: Vec<ExprId> = Vec::new();
-        let mut seg_start = 2usize;
-        let mut i = 2usize;
+        let mut seg_start = content_start;
+        let mut i = content_start;
         while i < end_idx {
             match bytes[i] {
-                // Keep an escape and its escaped byte inside the literal run
-                // (`\{`, `\n`, …) so a `\{` is not read as an interpolation.
-                b'\\' => i += 2,
+                // Keep an escape and its escaped sequence inside the literal run
+                // (`\{`, `\n`, `\u{...}`, …) so neither `\{` nor `\u{...}` is
+                // misread as an interpolation.
+                b'\\' => {
+                    if bytes.get(i + 1) == Some(&b'u') && bytes.get(i + 2) == Some(&b'{') {
+                        let mut k = i + 3;
+                        while k < end_idx && bytes[k] != b'}' {
+                            k += 1;
+                        }
+                        i = if k < end_idx { k + 1 } else { i + 2 };
+                    } else {
+                        i += 2;
+                    }
+                }
                 b'{' => {
                     if i > seg_start {
                         let span = seg_span(seg_start, i);
@@ -429,7 +491,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         // `lpp_str_concat` on the LEFT operand and coerces a scalar RIGHT
         // operand (int/float/bool) to a string, so a leading interpolation
         // (`f"{n} left"`) and an empty f-string both concatenate correctly.
-        let empty_span = seg_span(2, 2);
+        let empty_span = seg_span(content_start, content_start);
         let empty_origin = self.source_origin(empty_span)?;
         let mut accumulator = self.alloc_expression(Expression {
             kind: ExpressionKind::Literal(Literal::String {
@@ -599,12 +661,10 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         closure_body: Option<&[SyntaxNode]>,
     ) -> LowerResult<IdRange<ExprId>> {
         let mut arguments = Vec::new();
-        if self.peek_kind(cursor) != Some(TokenKind::RightParen) {
-            loop {
-                arguments.push(self.parse_expression(cursor, closure_body)?);
-                if !self.consume(cursor, TokenKind::Comma) {
-                    break;
-                }
+        while self.peek_kind(cursor) != Some(TokenKind::RightParen) {
+            arguments.push(self.parse_expression(cursor, closure_body)?);
+            if !self.consume(cursor, TokenKind::Comma) {
+                break;
             }
         }
         let span = self.cursor_span(cursor);
@@ -622,12 +682,10 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         close: TokenKind,
     ) -> LowerResult<IdRange<TypeRefId>> {
         let mut arguments = Vec::new();
-        if self.peek_kind(cursor) != Some(close) {
-            loop {
-                arguments.push(self.parse_type_ref(cursor)?);
-                if !self.consume(cursor, TokenKind::Comma) {
-                    break;
-                }
+        while self.peek_kind(cursor) != Some(close) {
+            arguments.push(self.parse_type_ref(cursor)?);
+            if !self.consume(cursor, TokenKind::Comma) {
+                break;
             }
         }
         let span = self.cursor_span(cursor);
@@ -648,27 +706,25 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let parent = self.current_scope();
         let scope = self.begin_scope(parent, placeholder_origin)?;
         let mut parameters = Vec::new();
-        if self.peek_kind(cursor) != Some(TokenKind::RightParen) {
-            loop {
-                let name_token = self.expect_identifier(cursor, "expected closure parameter")?;
-                let name = self.intern_token(name_token)?;
-                let type_ref = if self.consume(cursor, TokenKind::Colon) {
-                    Some(self.parse_type_ref(cursor)?)
-                } else {
-                    None
-                };
-                let origin = self.source_origin(name_token.span)?;
-                parameters.push(self.declare_local(
-                    name,
-                    false,
-                    LocalKind::Parameter,
-                    type_ref,
-                    None,
-                    origin,
-                )?);
-                if !self.consume(cursor, TokenKind::Comma) {
-                    break;
-                }
+        while self.peek_kind(cursor) != Some(TokenKind::RightParen) {
+            let name_token = self.expect_identifier(cursor, "expected closure parameter")?;
+            let name = self.intern_token(name_token)?;
+            let type_ref = if self.consume(cursor, TokenKind::Colon) {
+                Some(self.parse_type_ref(cursor)?)
+            } else {
+                None
+            };
+            let origin = self.source_origin(name_token.span)?;
+            parameters.push(self.declare_local(
+                name,
+                false,
+                LocalKind::Parameter,
+                type_ref,
+                None,
+                origin,
+            )?);
+            if !self.consume(cursor, TokenKind::Comma) {
+                break;
             }
         }
         self.expect(
@@ -794,4 +850,25 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         }
         false
     }
+}
+
+pub(super) fn split_int_suffix(raw: &str) -> (&str, Option<&'static str>) {
+    const SUFFIXES: &[(&str, Option<&'static str>)] = &[
+        ("usize", Some("USize")),
+        ("isize", Some("ISize")),
+        ("u64", Some("U64")),
+        ("u32", Some("U32")),
+        ("u16", Some("U16")),
+        ("i64", None),
+        ("i32", Some("I32")),
+        ("i16", Some("I16")),
+        ("u8", Some("U8")),
+        ("i8", Some("I8")),
+    ];
+    for &(suffix, type_name) in SUFFIXES {
+        if let Some(prefix) = raw.strip_suffix(suffix) {
+            return (prefix, type_name);
+        }
+    }
+    (raw, None)
 }

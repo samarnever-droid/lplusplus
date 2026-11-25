@@ -38,7 +38,10 @@ impl Verifier<'_> {
                 let bool_ = self.types.primitive(PrimitiveType::Bool);
                 match operator {
                     UnaryOperator::Not if operand == bool_ => Some(bool_),
-                    UnaryOperator::Negate if self.is_numeric(operand) => Some(operand),
+                    UnaryOperator::Negate | UnaryOperator::Plus if self.is_numeric(operand) => {
+                        Some(operand)
+                    }
+                    UnaryOperator::BitNot if self.is_integral(operand) => Some(operand),
                     _ => {
                         self.push(
                             function,
@@ -100,10 +103,11 @@ impl Verifier<'_> {
                         let string = self.types.primitive(PrimitiveType::String);
                         let int = self.types.primitive(PrimitiveType::Int);
                         let float = self.types.primitive(PrimitiveType::Float);
+                        let char_ = self.types.primitive(PrimitiveType::Char);
                         if left == right && self.is_addable(left) {
                             Some(left)
                         } else if left == string
-                            && (right == int || right == float || right == bool_)
+                            && (right == int || right == float || right == bool_ || right == char_)
                         {
                             // String concatenation with an implicit stringified
                             // scalar right operand (`"n=" + 3`, f-string interp).
@@ -115,7 +119,8 @@ impl Verifier<'_> {
                     BinaryOperator::Subtract
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
-                    | BinaryOperator::Modulo => {
+                    | BinaryOperator::Modulo
+                    | BinaryOperator::Power => {
                         (left == right && self.is_numeric(left)).then_some(left)
                     }
                     BinaryOperator::BitAnd

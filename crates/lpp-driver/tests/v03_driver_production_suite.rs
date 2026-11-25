@@ -1827,3 +1827,97 @@ fn lpp_repl_multi_turn_eval_and_lpp_lsp_json_rpc_sequence() {
         "expected formatting edit:\n{lsp_text}"
     );
 }
+
+#[test]
+fn parity_basic_syntax_literals_and_control_flow() {
+    let src = r#"
+/* Block comment with /* nested comment */ inside */
+type Pair[T,] = (T, T,)
+type Mapper = fn(Int, Int,) -> Int
+
+def apply_fn(f: fn(Int, Int) -> Int, a: Int, b: Int,) -> Int:
+    /* inline comment */ return f(a, b,)
+
+def combine(x: Int, y: Int) -> Int:
+    return x + y
+
+def main():
+    # Scientific notation + octal + unary +/-/~
+    sci1 := 1e3
+    sci2 := 1.5e-2
+    sci3 := +2.5E+1
+    oct := 0o755
+    mask := ~0
+    print_float(sci1 + sci2 + sci3)
+    print(oct)
+    print(mask)
+
+    # Bitwise compound assignments
+    mut flags := 0b1010
+    flags |= 0b0101
+    flags &= 0b1100
+    flags ^= 0b0011
+    flags <<= 2
+    flags >>= 1
+    print(flags)
+
+    # Raw strings, unicode escapes, triple-quoted f-string with direct scalar & Char interpolation
+    raw := r"line1\nline2"
+    raw_tri := r"""a\tb"""
+    uni := "\u{0041}\u{03C0}"
+    ch := '\u{0042}'
+    tag := f"""v={oct} {ch} \u{0041}"""
+    print_str(raw)
+    print_str(raw_tri)
+    print_str(uni)
+    print(ord(chr(ch as Int)))
+    print_str(tag)
+
+    # Power operator ** and **=
+    mut pwr := 2 ** 10
+    pwr **= 1
+    print(pwr + 3 ** 4)
+    print_float(2.0 ** 3.5 + 10f64 - 10f64)
+
+    # Generic type alias + standalone fn type annotation + closure vs fn value + trailing commas
+    p: Pair[Int,] = (10, 20,)
+    m: Mapper = combine
+    cls: fn(Int, Int) -> Int = fn(a: Int, b: Int) -> Int: a * b
+    offset := 5
+    cls_cap: fn(Int, Int) -> Int = fn(a: Int, b: Int) -> Int: a + b + offset
+    print(apply_fn(m, p.0, p.1,))
+    print(apply_fn(cls, p.0, p.1,))
+    print(apply_fn(cls_cap, p.0, p.1,))
+
+    # Ternary conditional expression (including short-circuit safety)
+    denom := 0
+    safe := 100 / denom if denom != 0 else -1
+    tiered := 1 if oct > 500 else (2 if oct > 100 else 3)
+    print(safe)
+    print(tiered)
+
+    # Float & raw-string match + negative range step
+    match sci2:
+        0.015:
+            print_str("flt-ok")
+        _:
+            print_str("flt-miss")
+
+    match raw:
+        r"line1\nline2":
+            print_str("raw-ok")
+        _:
+            print_str("raw-miss")
+
+    mut sum := 0
+    for i in range(10, 0, -3):
+        sum += i
+    print(sum)
+"#;
+    assert_all_4_parity(
+        "basic_syntax_all_4",
+        src,
+        "1025.015000\n493\n-1\n30\nline1\\nline2\na\\tb\nA\u{03C0}\n66\nv=493 B A\n1105\n11.31370\
+8\n30\n200\n35\n-1\n2\nflt-ok\nraw-ok\n22\n",
+    );
+}

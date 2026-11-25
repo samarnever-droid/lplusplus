@@ -163,4 +163,4 @@ sh tests/test_pm_workflow.sh
 ```
 
 Read [Current Capabilities](CURRENT_CAPABILITIES.md) for the supported feature
-boundary and [v0.3.1 Release Notes](release/V0.3.1.md) for current highlights.
+boundary and [v0.3.2 Release Notes](release/V0.3.2.md) for current highlights.

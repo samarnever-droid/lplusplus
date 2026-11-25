@@ -592,19 +592,38 @@ fn fd_table() -> &'static Mutex<BTreeMap<i64, std::fs::File>> {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lpp_file_open(path: *const c_char, _flags: i64) -> i64 {
+pub unsafe extern "C" fn lpp_file_open(path: *const c_char, flags: i64) -> i64 {
     if path.is_null() {
         return -1;
     }
     let p = path_from(unsafe { cstr_bytes(path) });
-    make_parent_dirs(&p);
-    let Ok(file) = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&p)
-    else {
+    let create_new = (flags & 2) != 0;
+    let truncate = !create_new && (flags & 4) != 0;
+    let read_only = !create_new && !truncate && (flags & 8) != 0;
+    if !read_only {
+        make_parent_dirs(&p);
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    if read_only {
+        opts.write(false).create(false);
+    } else if create_new {
+        opts.write(true).create_new(true);
+    } else {
+        opts.write(true).create(true).truncate(truncate);
+    }
+    #[cfg(unix)]
+    if (flags & 1) != 0 {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_SYNC);
+    }
+    #[cfg(windows)]
+    if (flags & 1) != 0 {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_WRITE_THROUGH: u32 = 0x8000_0000;
+        opts.custom_flags(FILE_FLAG_WRITE_THROUGH);
+    }
+    let Ok(file) = opts.open(&p) else {
         return -1;
     };
     let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);

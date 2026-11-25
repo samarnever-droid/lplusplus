@@ -684,31 +684,9 @@ impl<'a> FnLower<'a> {
                 Ok(Class::I64)
             }
             "int_pow" => {
-                let base = fb.scratch(Val::I64);
-                let exp = fb.scratch(Val::I64);
-                let result = fb.scratch(Val::I64);
                 self.emit_operand(fb, arg0)?;
-                fb.s(base);
                 self.emit_operand(fb, self.arg1(args)?)?;
-                fb.s(exp);
-                // Negative integer exponents are unrepresentable and yield 0.
-                fb.g(exp).i64c(0).op(op::I64_LT_S).if_();
-                fb.i64c(0).s(result);
-                fb.else_();
-                fb.i64c(1).s(result);
-                fb.block();
-                fb.loop_();
-                fb.g(exp).op(op::I64_EQZ).br_if(1);
-                fb.g(exp).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
-                fb.g(result).g(base).op(op::I64_MUL).s(result);
-                fb.end();
-                fb.g(base).g(base).op(op::I64_MUL).s(base);
-                fb.g(exp).i64c(1).op(op::I64_SHR_U).s(exp);
-                fb.br(0);
-                fb.end();
-                fb.end();
-                fb.end();
-                fb.g(result);
+                super::lower_calls::emit_i64_pow(fb);
                 Ok(Class::I64)
             }
             "ceil" | "floor" | "sqrt" => {

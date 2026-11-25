@@ -95,8 +95,9 @@ pub(super) fn check_assign_shape(
         Rvalue::Unary { operator, operand } => {
             let ty = check_operand(operand)?;
             match (operator, ty) {
-                (UnaryOperator::Negate, t) if t.is_int() => {}
-                (UnaryOperator::Negate, cltypes::F64) => {}
+                (UnaryOperator::Negate | UnaryOperator::Plus | UnaryOperator::BitNot, t)
+                    if t.is_int() => {}
+                (UnaryOperator::Negate | UnaryOperator::Plus, cltypes::F64) => {}
                 (UnaryOperator::Not, cltypes::I8) => {}
                 _ => {
                     return Err(unsupported(mir_id, "invalid unary operands"));
@@ -128,6 +129,9 @@ pub(super) fn check_assign_shape(
                     Some(TypeKind::Primitive(PrimitiveType::Bool)) => {
                         scan.imports.insert(IMP_BOOL_TO_STR);
                     }
+                    Some(TypeKind::Primitive(PrimitiveType::Char)) => {
+                        scan.imports.insert(IMP_CHR);
+                    }
                     _ => {
                         return Err(unsupported(mir_id, "string concatenation with non-scalar"));
                     }
@@ -138,6 +142,13 @@ pub(super) fn check_assign_shape(
                 check_binary(*operator, left_ty, right_ty, mir_id)?;
                 if *operator == BinaryOperator::Modulo && left_ty == cltypes::F64 {
                     scan.imports.insert(IMP_FMOD);
+                }
+                if *operator == BinaryOperator::Power {
+                    if left_ty == cltypes::F64 {
+                        scan.imports.insert(IMP_POW);
+                    } else {
+                        scan.imports.insert(IMP_INT_POW);
+                    }
                 }
                 // Integer div/mod guards the zero
                 // divisor with the defined panic import.

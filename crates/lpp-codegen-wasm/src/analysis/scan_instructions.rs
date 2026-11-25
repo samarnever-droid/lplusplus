@@ -105,7 +105,8 @@ pub(crate) fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result
             }
             match (operator, class) {
                 (UnaryOperator::Not, Class::Bool | Class::I64) => {}
-                (UnaryOperator::Negate, Class::I64 | Class::F64) => {}
+                (UnaryOperator::Negate | UnaryOperator::Plus, Class::I64 | Class::F64) => {}
+                (UnaryOperator::BitNot, Class::I64) => {}
                 _ => {
                     return Err(unsupported(
                         "unary operator on this operand type",
@@ -122,6 +123,33 @@ pub(crate) fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result
         } => {
             let lc = scan_operand_class(lower, left)?;
             let rc = scan_operand_class(lower, right)?;
+            if *operator == BinaryOperator::Add && lc == Class::Str {
+                *lower.has_managed = true;
+                lower.needs.insert(H::Alloc);
+                lower.needs.insert(H::StrConcat);
+                match rc {
+                    Class::Str => {}
+                    Class::I64 => {
+                        lower.needs.insert(H::IntToStr);
+                    }
+                    Class::F64 => {
+                        lower.needs.insert(H::FloatToStr);
+                    }
+                    Class::Bool => {
+                        lower.needs.insert(H::BoolToStr);
+                    }
+                    Class::Char => {
+                        lower.needs.insert(H::Chr);
+                    }
+                    Class::Ptr => {
+                        return Err(unsupported(
+                            "binary operator on managed type",
+                            Some(lower.fn_id),
+                        ));
+                    }
+                }
+                return Ok(());
+            }
             if lc != rc {
                 return Err(unsupported(
                     "binary operand type mismatch",
@@ -138,15 +166,14 @@ pub(crate) fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result
                 (BinaryOperator::Equal, Class::Str) | (BinaryOperator::NotEqual, Class::Str) => {
                     lower.needs.insert(H::StrEq);
                 }
-                (BinaryOperator::Add, Class::Str) => {
-                    *lower.has_managed = true;
-                    lower.needs.insert(H::Alloc);
-                    lower.needs.insert(H::StrConcat);
+                (BinaryOperator::Power, Class::F64) => {
+                    lower.needs.insert(H::Pow);
                 }
                 (BinaryOperator::Subtract, Class::Str)
                 | (BinaryOperator::Multiply, Class::Str)
                 | (BinaryOperator::Divide, Class::Str)
-                | (BinaryOperator::Modulo, Class::Str) => {
+                | (BinaryOperator::Modulo, Class::Str)
+                | (BinaryOperator::Power, Class::Str) => {
                     return Err(unsupported("string arithmetic", Some(lower.fn_id)));
                 }
                 _ => {}

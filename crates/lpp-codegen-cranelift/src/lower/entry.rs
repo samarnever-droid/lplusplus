@@ -1,7 +1,9 @@
 use super::*;
 
 impl<'m> Lowering<'m> {
-    /// The generated C-ABI `main` wrapper: call `lpp_main`, return 0.
+    /// The generated C-ABI `main` wrapper: call `lpp_main` and forward its
+    /// integer result to the OS as the process exit status. A `Void` (or
+    /// non-`Int`-returning) `main` exits with status 0.
     pub(crate) fn lower_main_wrapper(
         &mut self,
         program: &MirProgram,
@@ -16,6 +18,14 @@ impl<'m> Lowering<'m> {
         let main_fn = program
             .function(main_fn_id)
             .expect("the main declaration retained its function");
+
+        // `main() -> Int` forwards its return value to the OS process exit
+        // code; news user code that returns the status explicitly behaves
+        // like every C program.
+        let forward_exit_code = matches!(
+            machine_type(types, main_fn.return_type),
+            Some(cltypes::I64)
+        );
 
         let mut sig = self.module.make_signature();
         sig.returns.push(AbiParam::new(cltypes::I32));
@@ -34,33 +44,44 @@ impl<'m> Lowering<'m> {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
             let entry = builder.create_block();
             builder.switch_to_block(entry);
-            if matches!(main_fn.kind, MirFunctionKind::Async) {
-                // The async entry is drained here — the execution
-                // boundary holds no references: empty env tuple,
-                // task, await, destroy.
-                let tuple_ref = self.import_ref(&mut builder, IMP_TUPLE_ALLOC);
-                let size = builder.ins().iconst(cltypes::I64, 16);
-                let zero = builder.ins().iconst(cltypes::I64, 0);
-                let call = builder.ins().call(tuple_ref, &[size, zero, zero]);
-                let env = builder.func.dfg.first_result(call);
-                let thunk_ref = self
-                    .module
-                    .declare_func_in_func(self.task_thunk_ids[&main_fn_id], builder.func);
-                let code = builder.ins().func_addr(cltypes::I64, thunk_ref);
-                let task = self.task_new(
-                    &mut builder,
-                    code,
-                    env,
-                    Self::task_managed_flag(types, main_fn.return_type),
-                );
-                let await_ref = self.import_ref(&mut builder, IMP_TASK_AWAIT);
-                builder.ins().call(await_ref, &[task]);
-                let destroy_ref = self.import_ref(&mut builder, IMP_TASK_DESTROY);
-                builder.ins().call(destroy_ref, &[task]);
+            let entry_code: Option<Value> = if matches!(main_fn.kind, MirFunctionKind::Async) {
+            // The async entry is drained here — the execution
+            // boundary holds no references: empty env tuple,
+            // task, await, destroy.
+            let tuple_ref = self.import_ref(&mut builder, IMP_TUPLE_ALLOC);
+            let size = builder.ins().iconst(cltypes::I64, 16);
+            let zero = builder.ins().iconst(cltypes::I64, 0);
+            let call = builder.ins().call(tuple_ref, &[size, zero, zero]);
+            let env = builder.func.dfg.first_result(call);
+            let thunk_ref = self
+                .module
+                .declare_func_in_func(self.task_thunk_ids[&main_fn_id], builder.func);
+            let code = builder.ins().func_addr(cltypes::I64, thunk_ref);
+            let task = self.task_new(
+                &mut builder,
+                code,
+                env,
+                Self::task_managed_flag(types, main_fn.return_type),
+            );
+            let await_ref = self.import_ref(&mut builder, IMP_TASK_AWAIT);
+            let await_call = builder.ins().call(await_ref, &[task]);
+            let result = builder.func.dfg.first_result(await_call);
+            let destroy_ref = self.import_ref(&mut builder, IMP_TASK_DESTROY);
+            builder.ins().call(destroy_ref, &[task]);
+            if forward_exit_code {
+                Some(result)
             } else {
-                let main_ref = self.module.declare_func_in_func(lpp_main, builder.func);
-                builder.ins().call(main_ref, &[]);
+                None
             }
+        } else {
+            let main_ref = self.module.declare_func_in_func(lpp_main, builder.func);
+            let call = builder.ins().call(main_ref, &[]);
+            if forward_exit_code {
+                Some(builder.func.dfg.first_result(call))
+            } else {
+                None
+            }
+        };
             if !self.shared_types.is_empty() {
                 // Reclaim any cyclic garbage still buffered below the
                 // collector's threshold so the process exits leak-free.
@@ -72,8 +93,11 @@ impl<'m> Lowering<'m> {
                 let fingerprint = builder.ins().iconst(cltypes::I64, fingerprint as i64);
                 builder.ins().call(flush_ref, &[fingerprint]);
             }
-            let zero = builder.ins().iconst(cltypes::I32, 0);
-            builder.ins().return_(&[zero]);
+            let status = match entry_code {
+                Some(code) => builder.ins().ireduce(cltypes::I32, code),
+                None => builder.ins().iconst(cltypes::I32, 0),
+            };
+            builder.ins().return_(&[status]);
             builder.seal_all_blocks();
             builder.finalize();
         }

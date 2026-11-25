@@ -387,6 +387,18 @@ fn const_fold_integer_wrapping_and_div_mod_boundaries() {
         Some(Constant::Integer(i64::MIN))
     );
     assert_eq!(fold_unary(UnaryOperator::Not, &Constant::Integer(1)), None);
+    assert_eq!(
+        fold_unary(UnaryOperator::Plus, &Constant::Integer(42)),
+        Some(Constant::Integer(42))
+    );
+    assert_eq!(
+        fold_unary(UnaryOperator::BitNot, &Constant::Integer(0)),
+        Some(Constant::Integer(-1))
+    );
+    assert_eq!(
+        fold_unary(UnaryOperator::BitNot, &Constant::Integer(-1)),
+        Some(Constant::Integer(0))
+    );
 }
 
 #[test]

@@ -609,19 +609,30 @@ impl<'a> FnCtx<'a> {
             }
             Rvalue::Unary { operator, operand } => {
                 let (ty, val) = self.operand_value(operand)?;
-                let r = self.fresh();
-                match (operator, ty) {
+                let r = match (operator, ty) {
                     (UnaryOperator::Negate, t) if t.is_int() => {
+                        let r = self.fresh();
                         self.line(format!("{r} = sub {} 0, {val}", t.llvm()));
+                        r
                     }
                     (UnaryOperator::Negate, Val::F64) => {
+                        let r = self.fresh();
                         self.line(format!("{r} = fneg double {val}"));
+                        r
+                    }
+                    (UnaryOperator::Plus, t) if t.is_int() || t == Val::F64 => val,
+                    (UnaryOperator::BitNot, t) if t.is_int() => {
+                        let r = self.fresh();
+                        self.line(format!("{r} = xor {} {val}, -1", t.llvm()));
+                        r
                     }
                     (UnaryOperator::Not, Val::I8) => {
+                        let r = self.fresh();
                         self.line(format!("{r} = xor i8 {val}, 1"));
+                        r
                     }
                     _ => return Err(unsupported(self.mir_id, "invalid unary operands")),
-                }
+                };
                 Some((ty, r))
             }
             Rvalue::Binary {
@@ -1188,7 +1199,11 @@ impl<'a> FnCtx<'a> {
         let collectible = self.plan.shared_types.contains(&closure_fn.ty);
 
         let raw_env = if cap_args.is_empty() {
-            "null".to_string()
+            if zero_params {
+                "null".to_string()
+            } else {
+                self.arc_alloc_no_dtor(8)
+            }
         } else {
             let dtor = format!("lpp_drop_c{}", closure_id.raw());
             let env = self.arc_alloc(8 * cap_args.len(), &dtor);
@@ -1323,10 +1338,28 @@ impl<'a> FnCtx<'a> {
                         let env = self.fresh();
                         self.line(format!("{gep} = getelementptr i8, ptr {cap}, i64 8"));
                         self.line(format!("{env} = load ptr, ptr {gep}, align 8"));
-                        if param_tys.is_empty() {
+                        let mut user_args = Vec::with_capacity(args_ops.len());
+                        for (op, &pt) in args_ops.iter().zip(param_tys.iter()) {
+                            let expected = val_of_type(self.types, pt, self.mir_id)?;
+                            let (vt, vn) = self.owned_value(op)?;
+                            let signed = is_signed_integer_kind(Some(self.types.kind(pt)));
+                            let c = self.coerce(&vn, vt, expected, signed);
+                            user_args.push(format!("{} {c}", expected.llvm()));
+                        }
+                        let has_env = self.fresh();
+                        let cls_lbl = self.fresh_label("cls_call");
+                        let fn_lbl = self.fresh_label("fn_call");
+                        let merge_lbl = self.fresh_label("cap_merge");
+                        self.line(format!("{has_env} = icmp ne ptr {env}, null"));
+                        self.line(format!(
+                            "br i1 {has_env}, label %{cls_lbl}, label %{fn_lbl}"
+                        ));
+
+                        self.line(format!("{cls_lbl}:"));
+                        let cls_res = if param_tys.is_empty() {
                             let boxed = self.fresh();
                             self.line(format!("{boxed} = call i64 {code}(ptr {env})"));
-                            Ok(emit_unbox_from_i64(
+                            emit_unbox_from_i64(
                                 &mut self.body,
                                 &boxed,
                                 result,
@@ -1336,19 +1369,13 @@ impl<'a> FnCtx<'a> {
                                     self.seq += 1;
                                     r
                                 },
-                            ))
+                            )
                         } else {
                             let mut call_args = vec![format!("ptr {env}")];
-                            for (op, &pt) in args_ops.iter().zip(param_tys.iter()) {
-                                let expected = val_of_type(self.types, pt, self.mir_id)?;
-                                let (vt, vn) = self.owned_value(op)?;
-                                let signed = is_signed_integer_kind(Some(self.types.kind(pt)));
-                                let c = self.coerce(&vn, vt, expected, signed);
-                                call_args.push(format!("{} {c}", expected.llvm()));
-                            }
+                            call_args.extend(user_args.iter().cloned());
                             if is_void_type(self.types, result) {
                                 self.line(format!("call void {code}({})", call_args.join(", ")));
-                                Ok(None)
+                                None
                             } else {
                                 let rv = val_of_type(self.types, result, self.mir_id)?;
                                 let res = self.fresh();
@@ -1357,8 +1384,38 @@ impl<'a> FnCtx<'a> {
                                     rv.llvm(),
                                     call_args.join(", ")
                                 ));
-                                Ok(Some((rv, res)))
+                                Some((rv, res))
                             }
+                        };
+                        self.line(format!("br label %{merge_lbl}"));
+
+                        self.line(format!("{fn_lbl}:"));
+                        let fn_res = if is_void_type(self.types, result) {
+                            self.line(format!("call void {code}({})", user_args.join(", ")));
+                            None
+                        } else {
+                            let rv = val_of_type(self.types, result, self.mir_id)?;
+                            let res = self.fresh();
+                            self.line(format!(
+                                "{res} = call {} {code}({})",
+                                rv.llvm(),
+                                user_args.join(", ")
+                            ));
+                            Some((rv, res))
+                        };
+                        self.line(format!("br label %{merge_lbl}"));
+
+                        self.line(format!("{merge_lbl}:"));
+                        match (cls_res, fn_res) {
+                            (Some((rv, cv)), Some((_, fv))) => {
+                                let phi = self.fresh();
+                                self.line(format!(
+                                    "{phi} = phi {} [ {cv}, %{cls_lbl} ], [ {fv}, %{fn_lbl} ]",
+                                    rv.llvm()
+                                ));
+                                Ok(Some((rv, phi)))
+                            }
+                            _ => Ok(None),
                         }
                     }
                     ValueClass::FunctionValue => {
@@ -1438,6 +1495,12 @@ impl<'a> FnCtx<'a> {
                 Some(TypeKind::Primitive(PrimitiveType::Bool)) => {
                     let rb = self.coerce(&rn, rt, Val::I8, false);
                     self.emit_call_direct(IMP_BOOL_TO_STR, &[(Val::I8, rb)], Some(Val::Ptr))
+                        .unwrap()
+                        .1
+                }
+                Some(TypeKind::Primitive(PrimitiveType::Char)) => {
+                    let rc = self.coerce(&rn, rt, Val::I64, false);
+                    self.emit_call_direct("lpp_chr", &[(Val::I64, rc)], Some(Val::Ptr))
                         .unwrap()
                         .1
                 }
@@ -1540,6 +1603,9 @@ impl<'a> FnCtx<'a> {
                     self.line(format!("{s} = frem double {l}, {r}"));
                     (Val::F64, s)
                 }
+                BinaryOperator::Power => self
+                    .emit_call_direct("lpp_pow", &[(Val::F64, l), (Val::F64, r)], Some(Val::F64))
+                    .unwrap(),
                 BinaryOperator::Equal
                 | BinaryOperator::NotEqual
                 | BinaryOperator::Less
@@ -1591,6 +1657,19 @@ impl<'a> FnCtx<'a> {
                 let s = self.fresh();
                 self.line(format!("{s} = mul {ty_str} {l}, {r}"));
                 (ty, s)
+            }
+            BinaryOperator::Power => {
+                let l64 = self.coerce(&l, ty, Val::I64, signed);
+                let r64 = self.coerce(&r, ty, Val::I64, signed);
+                let (_, raw) = self
+                    .emit_call_direct(
+                        "lpp_int_pow",
+                        &[(Val::I64, l64), (Val::I64, r64)],
+                        Some(Val::I64),
+                    )
+                    .unwrap();
+                let res = self.coerce(&raw, Val::I64, ty, signed);
+                (ty, res)
             }
             BinaryOperator::BitAnd | BinaryOperator::LogicalAnd => {
                 let s = self.fresh();

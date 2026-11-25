@@ -1565,3 +1565,42 @@ fn multithreaded_arc_retain_release_and_tuple_mixed_slot_cycle() {
         );
     }
 }
+
+#[test]
+fn file_open_honors_exclusive_truncate_and_readonly_flags() {
+    use lpp_runtime::io::{lpp_fd_size, lpp_file_close, lpp_file_open, lpp_file_pwrite};
+    let td = TempDir::new("file_open_flags");
+    let p = td.path("exclusive.dat");
+    let p_c = cstr(&p.to_string_lossy());
+    let missing = td.path("never/created.dat");
+    let missing_c = cstr(&missing.to_string_lossy());
+    unsafe {
+        // Read-only on missing file fails without creating parent dirs
+        assert_eq!(lpp_file_open(missing_c.as_ptr(), 8), -1);
+        assert!(!missing.parent().unwrap().exists());
+
+        // Exclusive create (`flags = 2`) succeeds first time, fails second time
+        let fd1 = lpp_file_open(p_c.as_ptr(), 2);
+        assert!(fd1 > 0);
+        let b = lpp_buf_alloc(8);
+        lpp_buf_set64le(b, 0, 123456);
+        assert_eq!(lpp_file_pwrite(fd1, b, 0, 0, 8), 8);
+        assert_eq!(lpp_fd_size(fd1), 8);
+        assert_eq!(lpp_file_open(p_c.as_ptr(), 2), -1);
+        lpp_file_close(fd1);
+
+        // Read-only (`flags = 8`) opens existing file cleanly and rejects writes
+        let fd_ro = lpp_file_open(p_c.as_ptr(), 8);
+        assert!(fd_ro > 0);
+        assert_eq!(lpp_fd_size(fd_ro), 8);
+        assert_eq!(lpp_file_pwrite(fd_ro, b, 0, 0, 8), -1);
+        lpp_file_close(fd_ro);
+
+        // Truncate (`flags = 4`) resets file size to 0
+        let fd_trunc = lpp_file_open(p_c.as_ptr(), 4);
+        assert!(fd_trunc > 0);
+        assert_eq!(lpp_fd_size(fd_trunc), 0);
+        lpp_file_close(fd_trunc);
+        lpp_buf_free(b);
+    }
+}

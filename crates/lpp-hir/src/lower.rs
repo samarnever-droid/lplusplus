@@ -616,6 +616,7 @@ fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, u8)> {
         TokenKind::Star => (BinaryOperator::Multiply, 4),
         TokenKind::Slash => (BinaryOperator::Divide, 4),
         TokenKind::Percent => (BinaryOperator::Modulo, 4),
+        TokenKind::StarStar => (BinaryOperator::Power, 5),
         _ => return None,
     })
 }

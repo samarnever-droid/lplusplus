@@ -1,6 +1,6 @@
 # L++ Roadmap — how complete is L++, and what "done" looks like
 
-_Updated for **v0.3.1** (`v0.3-dev`). These figures and capabilities reflect
+_Updated for **v0.3.2** (`v0.3-dev`). These figures and capabilities reflect
 observed implementation and test suites in this tree; open items remain tracked
 transparently below._
 
@@ -15,7 +15,7 @@ transparently below._
 | Tooling | **85%** | Keel PM (SemVer, lockfiles, `lpp/keel migrate`), DWARF `-g` debug info (`lpp debug` CLI + backtraces), `lpp fmt`, `lpp repl`, `lpp test`, `lpp-lsp`, `lpp-link`, `lpp-bench`. LSP semantic rename/references still minimal. |
 | Async / concurrency | **70%** | Threads, atomics, mutexes/rwlocks, multi-threaded work-stealing `async def`/`.await` executor, and static concurrent-write checks across `spawn` + `async` tasks exist; OS I/O readiness reactor (`epoll`/`kqueue`/`IOCP`), `Send`/`Sync` trait enforcement, and TSan CI validation remain open. |
 | Platforms | **75%** | Linux, Windows MSVC/PE, and macOS (arm64 + Intel) native CI, WASI WebAssembly CI, plus `x86_64-unknown-none` & `aarch64-unknown-none` bare-metal targets. Complete aarch64 Linux hosted execution and Windows Sanitizer coverage remain. |
-| Ecosystem & stability | **25%** | **v0.3.1**, modern `Keel.toml` across all in-repo packages, git registry (`llppregistry`), no 1.0 stability guarantee yet. |
+| Ecosystem & stability | **25%** | **v0.3.2**, modern `Keel.toml` across all in-repo packages, git registry (`llppregistry`), no 1.0 stability guarantee yet. |
 | **Overall: usable language today** | **~88%** | |
 | **Overall: mature 1.0 platform** | **~66%** | The remaining gap is async I/O reactor (`epoll`/`kqueue`/`IOCP`), static `Send`/`Sync` trait enforcement, Windows LLVM CI verification, and ecosystem scale. |
 

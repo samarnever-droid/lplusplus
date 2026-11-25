@@ -40,6 +40,32 @@ pub(crate) fn scan_string(
     })
 }
 
+pub(crate) fn scan_raw_string(input: &str, start: usize) -> Result<usize, LiteralError> {
+    let quote = start + 1;
+    let triple = input[quote..].starts_with("\"\"\"");
+    let mut offset = quote + if triple { 3 } else { 1 };
+
+    while offset < input.len() {
+        if triple && input[offset..].starts_with("\"\"\"") {
+            return Ok(offset + 3);
+        }
+        let (character, width) = next(input, offset);
+        if !triple && character == '"' {
+            return Ok(offset + width);
+        }
+        offset += width;
+    }
+
+    Err(LiteralError {
+        offset: start,
+        message: if triple {
+            "unterminated triple-quoted raw string"
+        } else {
+            "unterminated raw string literal"
+        },
+    })
+}
+
 pub(crate) fn scan_character(input: &str, start: usize) -> Result<usize, LiteralError> {
     let value_start = start + 1;
     if value_start >= input.len() {
@@ -99,6 +125,46 @@ fn scan_escape(input: &str, slash: usize, formatted: bool) -> Result<usize, Lite
             });
         }
         return Ok(second + 1);
+    }
+    if escaped == 'u' {
+        let brace = escaped_at + width;
+        if brace >= input.len() || input.as_bytes()[brace] != b'{' {
+            return Err(LiteralError {
+                offset: slash,
+                message: "invalid unicode escape; expected '\\u{...}'",
+            });
+        }
+        let digits_start = brace + 1;
+        let mut cursor = digits_start;
+        while cursor < input.len() && input.as_bytes()[cursor].is_ascii_hexdigit() {
+            cursor += 1;
+        }
+        if cursor >= input.len() || input.as_bytes()[cursor] != b'}' {
+            return Err(LiteralError {
+                offset: slash,
+                message: "unterminated unicode escape",
+            });
+        }
+        let hex = &input[digits_start..cursor];
+        if hex.is_empty() || hex.len() > 6 {
+            return Err(LiteralError {
+                offset: slash,
+                message: "unicode escape must contain 1 to 6 hex digits",
+            });
+        }
+        let Ok(codepoint) = u32::from_str_radix(hex, 16) else {
+            return Err(LiteralError {
+                offset: slash,
+                message: "invalid unicode escape",
+            });
+        };
+        if char::from_u32(codepoint).is_none() {
+            return Err(LiteralError {
+                offset: slash,
+                message: "invalid unicode scalar value",
+            });
+        }
+        return Ok(cursor + 1);
     }
     Err(LiteralError {
         offset: slash,

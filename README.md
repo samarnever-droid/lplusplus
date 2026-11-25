@@ -88,12 +88,12 @@ processes) are rejected up front with clear diagnostics. See
 
 ```bash
 # Linux / macOS — pinned, reviewable source installation
-git clone --depth 1 --branch v0.3.1 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.3.2 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 LPP_FROM_SOURCE=1 sh install.sh
 
 # Windows PowerShell — from the same pinned checkout
-git clone --depth 1 --branch v0.3.1 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.3.2 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1
@@ -412,6 +412,7 @@ at your option.
 ## Links
 
 - [Website](https://lplusplus.bond)
+- [v0.3.2 Release Notes](docs/release/V0.3.2.md)
 - [v0.3.1 Release Notes](docs/release/V0.3.1.md)
 - [v0.3.0 Release Notes](docs/release/V0.3.0.md)
 - [Language Tour](wiki/Language-Tour.md)

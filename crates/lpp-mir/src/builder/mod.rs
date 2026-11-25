@@ -335,6 +335,27 @@ fn unescape_literal(input: &str) -> Option<String> {
                 let value = u32::from_str_radix(&format!("{high}{low}"), 16).ok()?;
                 decoded.push(char::from_u32(value)?);
             }
+            'u' => {
+                if characters.next()? != '{' {
+                    return None;
+                }
+                let mut hex = String::with_capacity(6);
+                loop {
+                    let ch = characters.next()?;
+                    if ch == '}' {
+                        break;
+                    }
+                    if hex.len() >= 6 || !ch.is_ascii_hexdigit() {
+                        return None;
+                    }
+                    hex.push(ch);
+                }
+                if hex.is_empty() {
+                    return None;
+                }
+                let value = u32::from_str_radix(&hex, 16).ok()?;
+                decoded.push(char::from_u32(value)?);
+            }
             _ => return None,
         }
     }

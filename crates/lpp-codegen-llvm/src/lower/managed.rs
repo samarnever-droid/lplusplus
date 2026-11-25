@@ -529,6 +529,11 @@ fn emit_main_wrapper(
 
     let _ = writeln!(out, "define i32 @main() {{");
     let _ = writeln!(out, "entry:");
+    // `main() -> Int` (or any integer-typed `main` result) forwards its
+    // value to the OS as the process exit status, truncated to i32. Async
+    // mains forward the awaited task result the same way. Everything else
+    // exits with status 0.
+    let mut status: Option<String> = None;
     if matches!(main_fn.kind, MirFunctionKind::Async) {
         let thunk = format!("__lpp_task_thunk{}", main_fn_id.raw());
         let _ = writeln!(
@@ -544,10 +549,18 @@ fn emit_main_wrapper(
             out,
             "  %task = call ptr @{IMP_TASK_NEW}(ptr @{thunk}, ptr %env, i64 {managed})"
         );
-        let _ = writeln!(out, "  %ignored = call i64 @{IMP_TASK_AWAIT}(ptr %task)");
+        let forward = ret_ty.is_int();
+        let task_ret = if forward { "%taskres" } else { "%ignored" };
+        let _ = writeln!(out, "  {task_ret} = call i64 @{IMP_TASK_AWAIT}(ptr %task)");
         let _ = writeln!(out, "  call void @{IMP_TASK_DESTROY}(ptr %task)");
+        if forward {
+            status = Some(task_ret.to_string());
+        }
     } else if ret_ty == Val::Void {
         let _ = writeln!(out, "  call void @lpp_main()");
+    } else if ret_ty.is_int() {
+        let _ = writeln!(out, "  %mainres = call {} @lpp_main()", ret_ty.llvm());
+        status = Some("%mainres".to_string());
     } else {
         let _ = writeln!(out, "  %ignored = call {} @lpp_main()", ret_ty.llvm());
     }
@@ -558,7 +571,23 @@ fn emit_main_wrapper(
     if let Some(fp) = pgo_fingerprint {
         let _ = writeln!(out, "  call void @{IMP_PGO_FLUSH}(i64 {})", fp as i64);
     }
-    let _ = writeln!(out, "  ret i32 0");
+    match status {
+        Some(v) => {
+            let ty = ret_ty.llvm();
+            if ty == "i32" {
+                let _ = writeln!(out, "  ret i32 {v}");
+            } else if ty == "i64" {
+                let _ = writeln!(out, "  %exitcode = trunc i64 {v} to i32");
+                let _ = writeln!(out, "  ret i32 %exitcode");
+            } else {
+                let _ = writeln!(out, "  %exitwide = zext {ty} {v} to i32");
+                let _ = writeln!(out, "  ret i32 %exitwide");
+            }
+        }
+        None => {
+            let _ = writeln!(out, "  ret i32 0");
+        }
+    }
     let _ = writeln!(out, "}}");
     Ok(())
 }

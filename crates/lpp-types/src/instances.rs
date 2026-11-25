@@ -799,6 +799,15 @@ fn mark_owned_expressions(
                     expressions.push(base);
                     expressions.push(index);
                 }
+                ExpressionKind::Conditional {
+                    condition,
+                    then_expr,
+                    else_expr,
+                } => {
+                    expressions.push(condition);
+                    expressions.push(then_expr);
+                    expressions.push(else_expr);
+                }
                 ExpressionKind::Try(inner)
                 | ExpressionKind::Cast { value: inner, .. }
                 | ExpressionKind::Await(inner)

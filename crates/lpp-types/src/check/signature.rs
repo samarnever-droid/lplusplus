@@ -115,7 +115,7 @@ impl<'hir> TypeChecker<'hir> {
                 self.nominal_item_type(item.definition, arguments, item.origin)?
             }
             HirItemKind::Const { .. } => self.fresh(InferenceLevel::ROOT, item.origin)?,
-            HirItemKind::TypeAlias { target } => {
+            HirItemKind::TypeAlias { target, .. } => {
                 self.resolve_type_ref(target, item.module, &context)?
             }
             HirItemKind::Impl(impl_) => {
@@ -141,6 +141,9 @@ impl<'hir> TypeChecker<'hir> {
             HirItemKind::Enum(enum_) => Some(enum_.type_parameters),
             HirItemKind::Trait(trait_) => Some(trait_.type_parameters),
             HirItemKind::Impl(impl_) => Some(impl_.type_parameters),
+            HirItemKind::TypeAlias {
+                type_parameters, ..
+            } => Some(type_parameters),
             _ => None,
         };
         let parameters = range
@@ -216,6 +219,31 @@ impl<'hir> TypeChecker<'hir> {
                     .intern(TypeKind::Tuple(elements))
                     .map_err(|error| self.at(reference.origin, error.into()))?
             }
+            TypeRefKind::Function {
+                parameters: param_refs,
+                return_type,
+            } => {
+                let param_refs = self.package.type_refs(param_refs).to_vec();
+                let mut param_types = Vec::with_capacity(param_refs.len());
+                for param in param_refs {
+                    param_types.push(self.resolve_type_ref(param, module, parameters)?);
+                }
+                let parameters_list = self
+                    .interner
+                    .intern_list(&param_types)
+                    .map_err(|error| self.at(reference.origin, error.into()))?;
+                let result = if let Some(ret) = return_type {
+                    self.resolve_type_ref(ret, module, parameters)?
+                } else {
+                    self.interner.primitive(PrimitiveType::Void)
+                };
+                self.interner
+                    .intern(TypeKind::Function {
+                        parameters: parameters_list,
+                        result,
+                    })
+                    .map_err(|error| self.at(reference.origin, error.into()))?
+            }
         };
         self.assignments.type_refs[type_ref.index()] = Some(type_id);
         Ok(type_id)
@@ -250,8 +278,18 @@ impl<'hir> TypeChecker<'hir> {
             self.package.names.resolve_symbol(module, name)
         {
             if let Some(item_id) = self.definition_items[definition.index()]
-                && let HirItemKind::TypeAlias { target } = self.package.items[item_id].kind
+                && let HirItemKind::TypeAlias { target, .. } = self.package.items[item_id].kind
             {
+                let alias_params = &self.item_parameters[item_id.index()];
+                if !alias_params.is_empty() {
+                    return Err(self.at(
+                        origin,
+                        crate::TypeError::ArityMismatch {
+                            expected: alias_params.len(),
+                            actual: 0,
+                        },
+                    ));
+                }
                 if !self.resolving_aliases.insert(definition) {
                     return Err(self.at(origin, crate::TypeError::TypeAliasCycle { definition }));
                 }
@@ -318,6 +356,40 @@ impl<'hir> TypeChecker<'hir> {
                         .intern(TypeKind::UnresolvedName { module, name: base })
                         .map_err(|error| self.at(origin, error.into()));
                 };
+                if let Some(item_id) = self.definition_items[definition.index()]
+                    && let HirItemKind::TypeAlias { target, .. } = self.package.items[item_id].kind
+                {
+                    let alias_param_ids = self.item_parameters[item_id.index()].clone();
+                    if alias_param_ids.len() != arguments.len() {
+                        return Err(self.at(
+                            origin,
+                            crate::TypeError::ArityMismatch {
+                                expected: alias_param_ids.len(),
+                                actual: arguments.len(),
+                            },
+                        ));
+                    }
+                    if !self.resolving_aliases.insert(definition) {
+                        return Err(
+                            self.at(origin, crate::TypeError::TypeAliasCycle { definition })
+                        );
+                    }
+                    let alias_context = self.parameter_context(item_id);
+                    let resolved_target = self.resolve_type_ref(
+                        target,
+                        self.package.items[item_id].module,
+                        &alias_context,
+                    );
+                    self.resolving_aliases.remove(&definition);
+                    let resolved_target = resolved_target?;
+                    let mut substitution = crate::TypeSubstitution::new();
+                    for (param, arg) in alias_param_ids.into_iter().zip(arguments.iter().copied()) {
+                        substitution.insert(param, arg);
+                    }
+                    return substitution
+                        .apply(&mut self.interner, resolved_target, &mut self.budget)
+                        .map_err(|error| self.at(origin, error));
+                }
                 let arguments = self
                     .interner
                     .intern_list(arguments)

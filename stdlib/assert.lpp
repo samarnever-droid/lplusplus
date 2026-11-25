@@ -1,18 +1,21 @@
 ## L++ Standard Library: Assert and debug utilities
 ## Pure L++ — no C runtime needed.
+##
+## Failed assertions terminate the process immediately with exit status 1 so
+#  test harnesses and CI observe the failure.
 
 def assert(condition: Bool, msg: Str):
     if !condition:
         print_str(f"ASSERTION FAILED: {msg}")
-        command_exec("exit 1")
+        exit(1)
 
 def assert_eq(a: Int, b: Int, msg: Str):
     if a != b:
         print_str(f"ASSERT_EQ FAILED: {msg}")
         print(a)
         print(b)
-        command_exec("exit 1")
+        exit(1)
 
 def panic(msg: Str):
     print_str(f"PANIC: {msg}")
-    command_exec("exit 1")
+    exit(1)

@@ -824,6 +824,16 @@ impl<'a> FnLower<'a> {
                 fb.op(op::F64_NEG);
                 Ok(Class::F64)
             }
+            (UnaryOperator::Plus, Class::I64 | Class::F64) => {
+                self.emit_operand(fb, operand)?;
+                Ok(class)
+            }
+            (UnaryOperator::BitNot, Class::I64) => {
+                self.emit_operand(fb, operand)?;
+                fb.i64c(-1);
+                fb.op(op::I64_XOR);
+                Ok(Class::I64)
+            }
             _ => Err(unsupported(
                 "unary operator on this operand type",
                 Some(self.fn_id),
@@ -842,6 +852,36 @@ impl<'a> FnLower<'a> {
         let right_static = operand_class(self.env.program, self.env.types, right)?;
         let left_is_null = matches!(left, Operand::Constant(Constant::Integer(0)));
         let right_is_null = matches!(right, Operand::Constant(Constant::Integer(0)));
+        if operator == BinaryOperator::Add
+            && left_static == Class::Str
+            && right_static != Class::Str
+        {
+            self.emit_operand(fb, left)?;
+            self.emit_operand(fb, right)?;
+            match right_static {
+                Class::I64 => {
+                    self.call_helper(fb, H::IntToStr)?;
+                }
+                Class::F64 => {
+                    self.call_helper(fb, H::FloatToStr)?;
+                }
+                Class::Bool => {
+                    self.call_helper(fb, H::BoolToStr)?;
+                }
+                Class::Char => {
+                    fb.op(op::I64_EXTEND_I32_U);
+                    self.call_helper(fb, H::Chr)?;
+                }
+                _ => {
+                    return Err(unsupported(
+                        "binary operand type mismatch",
+                        Some(self.fn_id),
+                    ));
+                }
+            }
+            self.call_helper(fb, H::StrConcat)?;
+            return Ok(Class::Str);
+        }
         let lc = if left_is_null && right_static == Class::Ptr {
             fb.i32c(0);
             Class::Ptr

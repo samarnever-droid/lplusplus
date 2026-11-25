@@ -213,8 +213,14 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             TokenKind::PlusEqual => Some(BinaryOperator::Add),
             TokenKind::MinusEqual => Some(BinaryOperator::Subtract),
             TokenKind::StarEqual => Some(BinaryOperator::Multiply),
+            TokenKind::StarStarEqual => Some(BinaryOperator::Power),
             TokenKind::SlashEqual => Some(BinaryOperator::Divide),
             TokenKind::PercentEqual => Some(BinaryOperator::Modulo),
+            TokenKind::BitAndEqual => Some(BinaryOperator::BitAnd),
+            TokenKind::BitOrEqual => Some(BinaryOperator::BitOr),
+            TokenKind::BitXorEqual => Some(BinaryOperator::BitXor),
+            TokenKind::ShiftLeftEqual => Some(BinaryOperator::ShiftLeft),
+            TokenKind::ShiftRightEqual => Some(BinaryOperator::ShiftRight),
             TokenKind::Equal => None,
             _ => {
                 return Err(LowerError::new(
@@ -583,7 +589,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
     fn parse_single_pattern(&mut self, cursor: &mut Cursor) -> LowerResult<MatchPat> {
         if let Some(tok) = self.peek(cursor) {
             match tok.kind {
-                TokenKind::Integer | TokenKind::Minus | TokenKind::Character => {
+                TokenKind::Integer | TokenKind::Float | TokenKind::Minus | TokenKind::Character => {
                     let lo = self.parse_pattern_atom(cursor)?;
                     if self.consume(cursor, TokenKind::DotDotEqual) {
                         let hi = self.parse_pattern_atom(cursor)?;
@@ -603,7 +609,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                     }
                     return Ok(MatchPat::Literal(lo));
                 }
-                TokenKind::Bool | TokenKind::String => {
+                TokenKind::Bool | TokenKind::String | TokenKind::RawString => {
                     let lit = self.parse_pattern_atom(cursor)?;
                     return Ok(MatchPat::Literal(lit));
                 }
@@ -657,16 +663,28 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         })?;
         match tok.kind {
             TokenKind::Minus => {
-                let int_tok = self.expect(
-                    cursor,
-                    TokenKind::Integer,
-                    "expected integer literal after '-' in pattern",
-                )?;
-                let inner_lit = self.lower_int_token(int_tok)?;
+                let next_tok = self.advance(cursor).ok_or_else(|| {
+                    LowerError::new(
+                        "E3100",
+                        "expected numeric literal after '-' in pattern",
+                        tok.span,
+                    )
+                })?;
+                let inner_lit = match next_tok.kind {
+                    TokenKind::Integer => self.lower_int_token(next_tok)?,
+                    TokenKind::Float => self.lower_float_token(next_tok)?,
+                    _ => {
+                        return Err(LowerError::new(
+                            "E3100",
+                            "expected numeric literal after '-' in pattern",
+                            next_tok.span,
+                        ));
+                    }
+                };
                 let span = Span {
                     file: tok.span.file,
                     start: tok.span.start,
-                    end: int_tok.span.end,
+                    end: next_tok.span.end,
                 };
                 let origin = self.source_origin(span)?;
                 self.alloc_expression(Expression {
@@ -678,6 +696,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 })
             }
             TokenKind::Integer => self.lower_int_token(tok),
+            TokenKind::Float => self.lower_float_token(tok),
             TokenKind::Bool => {
                 let origin = self.source_origin(tok.span)?;
                 self.alloc_expression(Expression {
@@ -702,6 +721,13 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                     origin,
                 })
             }
+            TokenKind::RawString => {
+                let origin = self.source_origin(tok.span)?;
+                self.alloc_expression(Expression {
+                    kind: ExpressionKind::Literal(Literal::RawString(tok.span)),
+                    origin,
+                })
+            }
             _ => Err(LowerError::new(
                 "E3100",
                 "unsupported match pattern",
@@ -710,16 +736,40 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         }
     }
 
+    fn lower_float_token(&mut self, token: Token) -> LowerResult<ExprId> {
+        let raw = self.token_text(token);
+        let digits = raw.strip_suffix("f64").unwrap_or(raw);
+        let text = if digits.contains('_') {
+            Cow::Owned(digits.replace('_', ""))
+        } else {
+            Cow::Borrowed(digits)
+        };
+        let value = text
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| LowerError::new("E3104", "invalid float literal", token.span))?;
+        let origin = self.source_origin(token.span)?;
+        self.alloc_expression(Expression {
+            kind: ExpressionKind::Literal(Literal::FloatBits(value.to_bits())),
+            origin,
+        })
+    }
+
     fn lower_int_token(&mut self, token: Token) -> LowerResult<ExprId> {
         let raw = self.token_text(token);
-        let text = if raw.contains('_') {
-            Cow::Owned(raw.replace('_', ""))
+        let (digits, _) = crate::lower::expression::split_int_suffix(raw);
+        let text = if digits.contains('_') {
+            Cow::Owned(digits.replace('_', ""))
         } else {
-            Cow::Borrowed(raw)
+            Cow::Borrowed(digits)
         };
         let value =
             if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
                 i64::from_str_radix(hex, 16)
+            } else if let Some(octal) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O"))
+            {
+                i64::from_str_radix(octal, 8)
             } else if let Some(bin) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
                 i64::from_str_radix(bin, 2)
             } else {

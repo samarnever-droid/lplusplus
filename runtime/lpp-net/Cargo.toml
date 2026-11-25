@@ -1,6 +1,6 @@
 [package]
 name = "lpp-net-runtime"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Native Rust socket runtime for L++"
 license = "MIT OR Apache-2.0"

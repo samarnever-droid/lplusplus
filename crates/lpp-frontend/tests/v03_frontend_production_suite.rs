@@ -457,11 +457,15 @@ fn fstrings_handle_nested_braces_escapes_and_multiline_triple_quotes() {
 }
 
 #[test]
-fn raw_prefix_before_string_lexes_as_identifier_plus_string() {
-    // L++ lexer has no dedicated raw-string token (`r"..."` is Identifier("r") + String).
+fn raw_prefix_before_string_lexes_as_raw_string() {
     let kinds = non_trivia_kinds("r\"hello\"\n");
     assert_eq!(
         kinds,
+        [TokenKind::RawString, TokenKind::Newline, TokenKind::Eof]
+    );
+    let spaced = non_trivia_kinds("r \"hello\"\n");
+    assert_eq!(
+        spaced,
         [
             TokenKind::Identifier,
             TokenKind::String,
@@ -620,16 +624,49 @@ fn range_dots_and_method_dots_after_integers_do_not_mislex_as_floats() {
 }
 
 #[test]
-fn octal_and_scientific_notation_token_boundaries_are_explicit() {
-    // L++ lexer supports decimal, 0x/0X hex, 0b/0B binary, and decimal floats;
-    // `0o77` splits into Integer("0") + Identifier("o77") and `1.5e10` splits into Float("1.5") + Identifier("e10").
-    let oct_tokens = non_trivia_tokens(&lex_ok("0o77\n"));
+fn octal_and_scientific_notation_literals_lex_as_single_tokens() {
+    let oct_tokens = non_trivia_tokens(&lex_ok("0o77 0O7_5_5\n"));
     assert_eq!(oct_tokens[0].kind, TokenKind::Integer);
-    assert_eq!(oct_tokens[1].kind, TokenKind::Identifier);
+    assert_eq!(oct_tokens[0].text(&lex_ok("0o77 0O7_5_5\n").source), "0o77");
+    assert_eq!(oct_tokens[1].kind, TokenKind::Integer);
 
-    let sci_tokens = non_trivia_tokens(&lex_ok("1.5e10\n"));
-    assert_eq!(sci_tokens[0].kind, TokenKind::Float);
-    assert_eq!(sci_tokens[1].kind, TokenKind::Identifier);
+    let sci_src = "1.5e10 1e5 2.5E-3 1_000e+2\n";
+    let sci_lexed = lex_ok(sci_src);
+    let sci_tokens = non_trivia_tokens(&sci_lexed);
+    assert_eq!(
+        &sci_tokens
+            .iter()
+            .filter(|t| t.kind == TokenKind::Float)
+            .map(|t| t.text(&sci_lexed.source))
+            .collect::<Vec<_>>(),
+        &["1.5e10", "1e5", "2.5E-3", "1_000e+2"]
+    );
+}
+
+#[test]
+fn raw_strings_unicode_escapes_and_bitwise_compound_ops_lex() {
+    let src = concat!(
+        "def f():\n",
+        "    raw := r\"C:\\\\path\\n\"\n",
+        "    tri := r\"\"\"line1\\nline2\"\"\"\n",
+        "    uni := \"\\u{03C0}\\u{1F680}\"\n",
+        "    ch := '\\u{0041}'\n",
+        "    mut x := ~0o755\n",
+        "    x &= 1\n",
+        "    x |= 2\n",
+        "    x ^= 3\n",
+        "    x <<= 1\n",
+        "    x >>= 1\n",
+    );
+    let lexed = lex_ok(src);
+    let kinds: Vec<TokenKind> = lexed.tokens.iter().map(|t| t.kind).collect();
+    assert!(kinds.contains(&TokenKind::RawString));
+    assert!(kinds.contains(&TokenKind::BitNot));
+    assert!(kinds.contains(&TokenKind::BitAndEqual));
+    assert!(kinds.contains(&TokenKind::BitOrEqual));
+    assert!(kinds.contains(&TokenKind::BitXorEqual));
+    assert!(kinds.contains(&TokenKind::ShiftLeftEqual));
+    assert!(kinds.contains(&TokenKind::ShiftRightEqual));
 }
 
 // ============================================================================
@@ -1112,8 +1149,8 @@ fn negative_lexical_unexpected_characters_e1001() {
         "def f() {\n}\n",
         // 2: semicolon
         "def f():\n    x := 1;\n",
-        // 3: tilde bitwise not
-        "def f():\n    x := ~1\n",
+        // 3: stray closing brace outside formatted string
+        "def f():\n    x := }\n",
         // 4: backtick
         "def f():\n    x := `a`\n",
         // 5: dollar sign
@@ -1834,4 +1871,34 @@ fn attribute_span_and_pub_modifiers_attach_to_next_non_attribute_item() {
     assert!(parsed.items[0].public);
     assert!(!parsed.items[1].public);
     assert!(parsed.items[0].span.end < parsed.items[1].span.start);
+}
+
+#[test]
+fn block_comments_nested_and_indentation_preserved_and_errors_reported() {
+    let source = concat!(
+        "/* top-level\n",
+        "   /* nested block */ comment */\n",
+        "def compute(x: Int) -> Int:\n",
+        "    /* standalone block comment */\n",
+        "    /* inline */ return x + 1\n",
+    );
+    let parsed = parse_ok(source);
+    assert_eq!(parsed.items.len(), 1);
+    assert_eq!(parsed.items[0].name.as_deref(), Some("compute"));
+
+    assert_eq!(error_code("def f():\n    /* unterminated\n"), "E1004");
+    assert_eq!(error_code("def f():\n    x := 1e\n"), "E1005");
+    assert_eq!(error_code("def f():\n    x := 1e+\n"), "E1005");
+    assert_eq!(error_code("def f():\n    x := 1e500\n"), "E1005");
+    assert_eq!(error_code("def f():\n    x := 0o\n"), "E1005");
+    assert_eq!(error_code("def f():\n    x := \"\\u{D800}\"\n"), "E1004");
+    assert_eq!(error_code("def f():\n    x := \"\\u{}\"\n"), "E1004");
+    assert_eq!(error_code("def f():\n    x := r\"unterminated\n"), "E1004");
+
+    let suf = lex_ok("a := 255u8 + 10_i32 + 0x1f_usize + 1e3f64\n");
+    assert!(suf.tokens.iter().any(|t| t.kind == TokenKind::Integer));
+    assert!(suf.tokens.iter().any(|t| t.kind == TokenKind::Float));
+    assert_eq!(error_code("def f():\n    x := 256u8\n"), "E1005");
+    assert_eq!(error_code("def f():\n    x := 10f32\n"), "E1005");
+    assert_eq!(error_code("def f():\n    x := 10foo\n"), "E1005");
 }

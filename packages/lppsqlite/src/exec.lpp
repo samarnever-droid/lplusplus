@@ -68,20 +68,59 @@ def db_changes(d: Int) -> Int:
 
 # ── advisory file locking ──
 #
-# L++ exposes no flock/LockFileEx builtin, but `dir_create` maps to mkdir(2) /
-# CreateDirectoryA, which fail atomically when the target already exists. That
-# makes a lock *directory* a portable mutex.
+# The lock is an empty side-car file created with `file_open(path, 2)`, which
+# maps to `O_RDWR | O_CREAT | O_EXCL` on POSIX and `CREATE_NEW` on Windows:
+# creation succeeds atomically only for the first process, so two lppsqlite
+# processes can never hold the lock at once (the old `dir_create` mkdir race
+# let a second process overwrite a live snapshot mid-write).
+#
+# Stale-lock recovery: the lock file records the creator's Unix epoch
+# timestamp. If the lock is older than `STALE_LOCK_MS` the holder is assumed
+# dead (killed mid-write) and the lock is atomically re-created.
 #
 # This is advisory and cooperative: it stops two lppsqlite processes from
-# writing the same file concurrently (which previously corrupted it). It does
-# not coordinate with the real sqlite3, and a process killed mid-write leaves a
-# stale lock that must be removed by hand or waited out.
+# writing the same file concurrently. It does not coordinate with the real
+# sqlite3.
 
 def LOCK_SPINS() -> Int:
     return 200
 
+# A lock untouched for this long is considered stale (holder died).
+def STALE_LOCK_MS() -> Int:
+    return 30000
+
 def lock_path(path: Str) -> Str:
     return str_concat(path, "-lppsqlite-lock")
+
+# Reset the lock's embedded timestamp to now; the file is opened by stamp.
+def refresh_lock_stamp(lp: Str) -> Int:
+    stamp := int_to_str(time_ms())
+    return write_file(lp, stamp)
+
+# 1 when the lock file exists but its stamp is older than STALE_LOCK_MS.
+def lock_is_stale(lp: Str) -> Int:
+    if file_exists(lp) == 0:
+        return 1
+    content := read_file(lp)
+    if str_len(content) == 0:
+        return 1
+    stamp := str_to_int(content)
+    if stamp <= 0:
+        return 1
+    if time_ms() - stamp > STALE_LOCK_MS():
+        return 1
+    return 0
+
+# Take an existing (stale) lock over: replace the stamp atomically.
+def steal_stale_lock(lp: Str) -> Int:
+    if delete_file(lp) != 0:
+        return 0
+    fd := file_open(lp, 2)
+    if fd < 0:
+        return 0
+    refresh_lock_stamp(lp)
+    file_close(fd)
+    return 1
 
 # Try to take the lock; 1 on success. Waits up to ~2 s for a busy database.
 def acquire_lock(path: Str) -> Int:
@@ -92,9 +131,17 @@ def acquire_lock(path: Str) -> Int:
     lp := lock_path(path)
     mut tries := 0
     while tries < LOCK_SPINS():
-        if dir_create(lp) == 0:
+        fd := file_open(lp, 2)
+        if fd >= 0:
+            # Won the exclusive create: stamp it and hold via existence.
+            refresh_lock_stamp(lp)
+            file_close(fd)
             return 1
-        sleep_ms(10)
+        # Lock is held. If the holder died, reclaim it.
+        if lock_is_stale(lp) == 1:
+            if steal_stale_lock(lp) == 1:
+                return 1
+        sleep(10)
         tries = tries + 1
     return 0
 
@@ -103,7 +150,7 @@ def release_lock(path: Str):
         return
     if str_len(env_get("LPPSQLITE_NO_LOCK")) > 0:
         return
-    dir_remove(lock_path(path))
+    delete_file(lock_path(path))
 
 # ── open / close ──
 
@@ -236,7 +283,10 @@ def db_busy(d: Int) -> Int:
     return 0
 
 def close_db(d: Int):
-    flush(d)
+    # Skip the full-database write when nothing changed: read-heavy
+    # workloads no longer rewrite the entire file on close.
+    if pager.pg_dirty(db_pager(d)) == 1:
+        flush(d)
     if db_locked(d) == 1:
         release_lock(db_path(d))
     schema.sc_free(db_schema(d))
