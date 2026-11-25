@@ -22,7 +22,9 @@ import {
   X,
   Layers,
   Code,
+  Star,
 } from "lucide-react";
+import { useAuth, useClerk } from "@clerk/react";
 import { rankPackages, PackageItem, SortMode } from "./lib/searchAlgorithm";
 import { LppClerkProvider } from "./lib/clerk";
 import Footer from "./components/Footer";
@@ -40,6 +42,8 @@ const CATEGORIES = [
 ];
 
 export function PackagesApp() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { openSignIn } = useClerk();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [sortMode, setSortMode] = useState<SortMode>("relevance");
@@ -47,6 +51,8 @@ export function PackagesApp() {
   const [selectedPackage, setSelectedPackage] = useState<PackageItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [starCounts, setStarCounts] = useState<Record<string, number>>({});
+  const [myStars, setMyStars] = useState<Set<string>>(new Set());
   const [stats, setStats] = useState({
     packages_count: 17,
     downloads_count: 0,
@@ -58,6 +64,55 @@ export function PackagesApp() {
     fetchPackages();
     fetchStats();
   }, []);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    (async () => {
+      try {
+        const token = isSignedIn ? await getToken() : null;
+        const res = await fetch("https://api.lplusplus.bond/api/stars", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.counts) setStarCounts(data.counts);
+          if (Array.isArray(data.mine)) setMyStars(new Set(data.mine));
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [isLoaded, isSignedIn, getToken]);
+
+  const toggleStar = async (pkgName: string) => {
+    if (!isSignedIn) {
+      openSignIn();
+      return;
+    }
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await fetch(
+        `https://api.lplusplus.bond/api/stars/${encodeURIComponent(pkgName)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setStarCounts((prev) => ({ ...prev, [pkgName]: data.stars }));
+        setMyStars((prev) => {
+          const next = new Set(prev);
+          if (data.starred) next.add(pkgName);
+          else next.delete(pkgName);
+          return next;
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  };
 
   const fetchStats = async () => {
     try {
@@ -312,7 +367,21 @@ export function PackagesApp() {
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
-                        onClick={() => copy(`lpp add ${pkg.name}`, `add-${pkg.name}`)}
+                        onClick={() => toggleStar(pkg.name)}
+                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 font-mono text-xs transition-all ${
+                          myStars.has(pkg.name)
+                            ? "border-[#6c47ff]/60 bg-[#6c47ff]/20 text-[#a78bfa]"
+                            : "border-white/10 bg-white/[0.04] text-zinc-300 hover:border-[#6c47ff]/40 hover:text-white"
+                        }`}
+                        title={myStars.has(pkg.name) ? "Unstar package" : "Star package"}
+                      >
+                        <Star
+                          className={`h-3.5 w-3.5 ${myStars.has(pkg.name) ? "fill-[#a78bfa]" : ""}`}
+                        />
+                        <span>{starCounts[pkg.name] || 0}</span>
+                      </button>
+                      <button
+                        onClick={() => copy(`keel add ${pkg.name}`, `add-${pkg.name}`)}
                         className="flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-4 py-2 font-mono text-xs font-bold text-white hover:border-acid/50 hover:text-acid transition-all"
                       >
                         {copiedText === `add-${pkg.name}` ? (

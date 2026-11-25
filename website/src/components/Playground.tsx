@@ -3,6 +3,7 @@ import {
   Bookmark,
   Check,
   Copy,
+  Eye,
   Play,
   RotateCcw,
   Share2,
@@ -12,6 +13,8 @@ import {
 } from "lucide-react";
 import { SignInButton, useAuth, useUser } from "@clerk/react";
 import { SectionHead } from "../lib/ui";
+
+const API_BASE = "https://api.lplusplus.bond";
 
 interface Preset {
   id: string;
@@ -89,24 +92,9 @@ unsafe def kmain() -> Void:
 
 interface SavedSnippet {
   id: string;
-  name: string;
+  title: string;
   code: string;
-}
-
-function encodeShare(code: string): string {
-  try {
-    return btoa(unescape(encodeURIComponent(code)));
-  } catch {
-    return "";
-  }
-}
-
-function decodeShare(hash: string): string | null {
-  try {
-    return decodeURIComponent(escape(atob(hash)));
-  } catch {
-    return null;
-  }
+  views?: number;
 }
 
 function evaluatePreview(code: string): string {
@@ -130,82 +118,148 @@ function evaluatePreview(code: string): string {
 }
 
 export default function Playground() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, getToken } = useAuth();
   const { user } = useUser();
 
   const [activePreset, setActivePreset] = useState(0);
   const [code, setCode] = useState(PRESETS[0].code);
   const [output, setOutput] = useState(PRESETS[0].output);
-  const [shared, setShared] = useState(false);
+  const [snippetTitle, setSnippetTitle] = useState("my-snippet.lpp");
+  const [loadedViews, setLoadedViews] = useState<number | null>(null);
+  const [sharedUrl, setSharedUrl] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [savedSnippets, setSavedSnippets] = useState<SavedSnippet[]>([]);
 
-  // Load shared snippet from URL hash `#play=...`
+  // Load shared snippet from Turso via `?s=<id>`
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const hash = window.location.hash;
-    if (hash.startsWith("#play=")) {
-      const decoded = decodeShare(hash.slice(6));
-      if (decoded) {
-        setCode(decoded);
-        setOutput(evaluatePreview(decoded));
-      }
-    }
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("s");
+    if (!id) return;
+    fetch(`${API_BASE}/api/snippets/${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.code) {
+          setCode(data.code);
+          setSnippetTitle(data.title || "shared.lpp");
+          setLoadedViews(typeof data.views === "number" ? data.views : null);
+          setOutput(evaluatePreview(data.code));
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  const savedSnippets: SavedSnippet[] = Array.isArray(user?.unsafeMetadata?.savedSnippets)
-    ? (user?.unsafeMetadata?.savedSnippets as SavedSnippet[])
-    : [];
+  // Load signed-in user's saved snippets from Turso
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      setSavedSnippets([]);
+      return;
+    }
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await fetch(`${API_BASE}/api/snippets/mine`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.snippets)) {
+            setSavedSnippets(data.snippets);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [isLoaded, isSignedIn, getToken]);
 
   const handleRun = () => {
     setOutput(evaluatePreview(code));
   };
 
   const handleShare = async () => {
-    const encoded = encodeShare(code);
-    const url = `${window.location.origin}/#play=${encoded}`;
-    window.history.replaceState(null, "", `#play=${encoded}`);
+    setSharing(true);
     try {
-      await navigator.clipboard.writeText(url);
-    } catch {
-      /* ignore */
+      const token = isSignedIn ? await getToken() : null;
+      const res = await fetch(`${API_BASE}/api/snippets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          title: snippetTitle.trim() || "shared.lpp",
+          code,
+          authorName: user?.username || user?.fullName || "Anonymous",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const link = data.url || `${window.location.origin}/?s=${data.id}#playground`;
+        window.history.replaceState(null, "", `/?s=${data.id}#playground`);
+        try {
+          await navigator.clipboard.writeText(link);
+        } catch {
+          /* ignore */
+        }
+        setSharedUrl(link);
+        setTimeout(() => setSharedUrl(null), 3000);
+        if (isSignedIn && data.id) {
+          setSavedSnippets((prev) => [
+            { id: data.id, title: data.title || snippetTitle, code, views: 0 },
+            ...prev,
+          ]);
+        }
+      }
+    } finally {
+      setSharing(false);
     }
-    setShared(true);
-    setTimeout(() => setShared(false), 2000);
   };
 
   const handleSaveToAccount = async () => {
-    if (!user) return;
+    if (!isSignedIn) return;
     setSaving(true);
     try {
-      const name = `snippet-${savedSnippets.length + 1}.lpp`;
-      const trimmed = code.slice(0, 1200); // stay well within Clerk's 8KB metadata limit
-      const next = [{ id: String(Date.now()), name, code: trimmed }, ...savedSnippets].slice(0, 4);
-      await user.update({
-        unsafeMetadata: {
-          ...user.unsafeMetadata,
-          savedSnippets: next,
+      const token = await getToken();
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/snippets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
+        body: JSON.stringify({
+          title: snippetTitle.trim() || `snippet-${savedSnippets.length + 1}.lpp`,
+          code,
+          authorName: user?.username || user?.fullName || "Publisher",
+        }),
       });
-      setSavedNotice(true);
-      setTimeout(() => setSavedNotice(false), 2000);
-    } catch {
-      /* ignore */
+      if (res.ok) {
+        const data = await res.json();
+        setSavedSnippets((prev) => [
+          { id: data.id, title: data.title || snippetTitle, code, views: 0 },
+          ...prev,
+        ]);
+        setSavedNotice(true);
+        setTimeout(() => setSavedNotice(false), 2000);
+      }
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteSnippet = async (id: string) => {
-    if (!user) return;
-    const next = savedSnippets.filter((s) => s.id !== id);
-    await user.update({
-      unsafeMetadata: {
-        ...user.unsafeMetadata,
-        savedSnippets: next,
-      },
-    });
+    const token = await getToken();
+    if (!token) return;
+    setSavedSnippets((prev) => prev.filter((s) => s.id !== id));
+    await fetch(`${API_BASE}/api/snippets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
   };
 
   return (
@@ -219,7 +273,7 @@ export default function Playground() {
               Try L++ v0.3.2 <span className="text-[#a78bfa]">right here</span>
             </>
           }
-          desc="Edit live snippets, test @pure/@deny capability rules, share instant #play URLs, or save snippets straight to your account."
+          desc="Edit live snippets, test @pure/@deny capability rules, generate instant short share links, and save full programs to your account."
         />
 
         <div className="mt-10 grid gap-6 lg:grid-cols-12">
@@ -234,6 +288,7 @@ export default function Playground() {
                       setActivePreset(idx);
                       setCode(p.code);
                       setOutput(p.output);
+                      setLoadedViews(null);
                     }}
                     className={`rounded-lg px-2.5 py-1 font-mono text-xs transition-all ${
                       activePreset === idx
@@ -269,10 +324,11 @@ export default function Playground() {
                 </button>
                 <button
                   onClick={handleShare}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 font-mono text-[11px] text-zinc-300 hover:border-[#6c47ff]/50 hover:text-white"
+                  disabled={sharing}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 font-mono text-[11px] text-zinc-300 hover:border-[#6c47ff]/50 hover:text-white disabled:opacity-50"
                 >
-                  {shared ? <Check className="h-3 w-3 text-emerald-400" /> : <Share2 className="h-3 w-3" />}
-                  {shared ? "Link Copied" : "Share"}
+                  {sharedUrl ? <Check className="h-3 w-3 text-emerald-400" /> : <Share2 className="h-3 w-3" />}
+                  {sharing ? "Saving..." : sharedUrl ? "Short Link Copied" : "Share"}
                 </button>
                 <button
                   onClick={handleRun}
@@ -297,10 +353,18 @@ export default function Playground() {
                 <span className="font-mono text-[11px] uppercase tracking-wider text-zinc-400">
                   Compiler &amp; Output
                 </span>
-                <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-400">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  v0.3.2
-                </span>
+                <div className="flex items-center gap-3">
+                  {loadedViews !== null && (
+                    <span className="inline-flex items-center gap-1 font-mono text-[11px] text-zinc-400">
+                      <Eye className="h-3 w-3" />
+                      {loadedViews} views
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-400">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    v0.3.2
+                  </span>
+                </div>
               </div>
               <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-6 text-zinc-200">
                 {output}
@@ -308,7 +372,7 @@ export default function Playground() {
             </div>
           </div>
 
-          {/* Saved Snippets Sidebar (Clerk-synced) */}
+          {/* Saved Snippets Sidebar (Turso-backed + Clerk Auth) */}
           <div className="clerk-card flex flex-col justify-between rounded-2xl p-5 lg:col-span-4">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -319,7 +383,7 @@ export default function Playground() {
                   </h3>
                 </div>
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] text-zinc-400">
-                  {savedSnippets.length} / 4
+                  {savedSnippets.length} saved
                 </span>
               </div>
 
@@ -327,6 +391,12 @@ export default function Playground() {
                 <div className="text-xs text-zinc-400">Loading account...</div>
               ) : isSignedIn && user ? (
                 <div className="space-y-3">
+                  <input
+                    value={snippetTitle}
+                    onChange={(e) => setSnippetTitle(e.target.value)}
+                    placeholder="snippet-name.lpp"
+                    className="w-full rounded-xl border border-white/15 bg-[#09090b] px-3 py-2 font-mono text-xs text-white focus:border-[#6c47ff] focus:outline-none"
+                  />
                   <button
                     onClick={handleSaveToAccount}
                     disabled={saving}
@@ -335,22 +405,22 @@ export default function Playground() {
                     {savedNotice ? (
                       <>
                         <Check className="h-3.5 w-3.5" />
-                        Saved to your account!
+                        Saved to Cloud!
                       </>
                     ) : (
                       <>
                         <Sparkles className="h-3.5 w-3.5" />
-                        {saving ? "Saving..." : "Save Current Snippet"}
+                        {saving ? "Saving..." : "Save Snippet"}
                       </>
                     )}
                   </button>
 
                   {savedSnippets.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-white/15 bg-[#09090b]/60 p-5 text-center text-xs text-zinc-400">
-                      No saved snippets yet. Click <strong>Save Current Snippet</strong> to sync code across devices.
+                      No saved snippets yet. Save code to access it from any device or share a short URL.
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                       {savedSnippets.map((s) => (
                         <div
                           key={s.id}
@@ -359,11 +429,12 @@ export default function Playground() {
                           <button
                             onClick={() => {
                               setCode(s.code);
+                              setSnippetTitle(s.title);
                               setOutput(evaluatePreview(s.code));
                             }}
                             className="truncate text-left font-mono text-xs text-zinc-200 hover:text-[#a78bfa]"
                           >
-                            {s.name}
+                            {s.title}
                           </button>
                           <button
                             onClick={() => handleDeleteSnippet(s.id)}
@@ -380,7 +451,7 @@ export default function Playground() {
               ) : (
                 <div className="rounded-xl border border-white/10 bg-[#09090b]/70 p-5 text-center space-y-3">
                   <p className="text-xs leading-relaxed text-zinc-400">
-                    Sign in to save L++ snippets to your account and sync them across devices.
+                    Sign in to save unlimited L++ snippets to your cloud library and manage shared links.
                   </p>
                   <SignInButton mode="modal">
                     <button className="clerk-btn-primary w-full rounded-xl px-4 py-2 text-xs font-semibold">
