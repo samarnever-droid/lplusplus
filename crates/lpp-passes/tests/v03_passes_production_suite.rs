@@ -2800,3 +2800,48 @@ fn linear_scaling_and_exact_step_budget_under_optimization() {
     };
     assert!(execute_mir_with_stats(&small_opt, &small_types, e_small, &[], too_tight).is_err());
 }
+
+#[test]
+fn algebraic_simplify_pass_rewrites_identities_and_preserves_oracle_equivalence() {
+    let source = concat!(
+        "def calc(x: Int, b: Bool) -> Int:\n",
+        "    a := (x + 0) - 0\n",
+        "    c := (a * 1) / 1\n",
+        "    d := c * 8\n",
+        "    e := (d | 0) & -1\n",
+        "    f := (e ^ 0) << 0\n",
+        "    g := (f >> 0) + (x * 0) + (x % 1)\n",
+        "    h := g + (x - x) + (x ^ x) + (x ** 0) + (x ** 1) + (x ** 2)\n",
+        "    flag := (b == true) and (b or false)\n",
+        "    if flag:\n",
+        "        return h + (+x)\n",
+        "    return h\n",
+        "\n",
+        "def main() -> Int:\n",
+        "    return calc(7, true) + calc(-3, false)\n",
+    );
+    let (unopt, types) = compile_mir(source);
+    let entry = entry_function(&unopt);
+    let before = run_legacy(&unopt, &types, entry);
+    // calc(7, true) = 7*8 + 1 + 7 + 49 + 7 = 120
+    // calc(-3, false) = -3*8 + 1 + (-3) + 9 = -17
+    // total = 103
+    assert_eq!(before.value, ExecutionValue::Int(103));
+
+    let mut opt = unopt.clone();
+    run_optimization(&mut opt, &types, OptimizationLevel::O2).unwrap();
+    assert!(verify_mir(&opt, &types).is_empty());
+    let after = run_legacy(&opt, &types, entry);
+    assert_eq!(after.value, before.value);
+
+    // Verify strength reduction `x * 8 -> x << 3` and `x ** 2 -> x * x` happened in MIR.
+    let snap = mir_snapshot(&opt);
+    assert!(
+        snap.contains("ShiftLeft") || snap.contains("<<"),
+        "expected power-of-two multiply to strength-reduce to ShiftLeft:\n{snap}"
+    );
+    assert!(
+        !snap.contains("Power"),
+        "expected x ** 0/1/2 to be eliminated by algebraic-simplify:\n{snap}"
+    );
+}

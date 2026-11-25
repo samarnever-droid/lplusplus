@@ -16,6 +16,7 @@ use crate::{
 use super::{ShadowTypeError, TypeChecker};
 
 mod builtins;
+mod capabilities;
 mod inference;
 mod intrinsics;
 mod matches;

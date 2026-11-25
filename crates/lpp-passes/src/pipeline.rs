@@ -6,16 +6,20 @@ use lpp_common::OptimizationLevel;
 use lpp_mir::{MirFunctionId, MirProgram, mir_snapshot};
 use lpp_types::TypeInterner;
 
-use crate::passes::{BranchFoldPass, ConstFoldPass, ConstPropPass, InlinePass};
+use crate::passes::{
+    AlgebraicSimplifyPass, BranchFoldPass, ConstFoldPass, ConstPropPass, InlinePass,
+};
 use crate::{PassManager, PassManagerError, PassManagerOutcome};
 
-/// One canonical local optimization sweep: `const-fold`, `const-prop`, then
-/// `branch-fold`, each revalidated by the manager afterwards.
+/// One canonical local optimization sweep: `const-fold`, `const-prop`,
+/// `algebraic-simplify`, then `branch-fold`, each revalidated by the manager
+/// afterwards.
 #[must_use]
 pub fn optimization_passes() -> PassManager {
     let mut manager = PassManager::new();
     manager.push(ConstFoldPass);
     manager.push(ConstPropPass);
+    manager.push(AlgebraicSimplifyPass);
     manager.push(BranchFoldPass);
     manager
 }

@@ -177,7 +177,7 @@ pub def answer() -> Int:
     return ANSWER
 ```
 
-Constants and type aliases use `=`; type aliases may also be generic (`type Pair[T] = (T, T)`). Attributes are recorded as simple `@identifier` metadata; the parser does not provide a general attribute argument grammar. `pub` is parsed and carried through HIR, but the current selective-import resolution path does not enforce a public/private access check. Do not use `pub` as a security boundary.
+Constants and type aliases use `=`; type aliases may also be generic (`type Pair[T] = (T, T)`). Attributes are recorded as `@name` or `@name(arg1, arg2, ...)` metadata; functions support compile-time capability and effect enforcement via `@pure` and `@deny(fs, net, exec, env, io, ffi, unsafe, spawn, time, rand, gui, sys)` checked transitively across the static call graph (`E3204` / `E3205`). `pub` is parsed and carried through HIR, but the current selective-import resolution path does not enforce a public/private access check. Do not use `pub` as a security boundary.
 
 ### 3.4 Imports and modules
 
@@ -275,7 +275,7 @@ Expressions include literals, names, unary/binary operations, calls, list/tuple 
 - Await is postfix: `task.await` or `make_task().await`; it is intended for `async def` bodies.
 - `value?` propagates an enum residual from a function. The operand’s enum must have its success variant first with exactly one payload. The enclosing function must return the same enum definition, and residual payload types must be compatible. This is a narrow enum convention, not a built-in exception system or a general `Result` constraint.
 - Formatted strings are `f"...{expr}..."`; `\{` and `\}` escape literal braces. String `+` concatenates with `Str`, `Int`, `Float`, `Bool`, and `Char` right operands across all backends.
-- Tuple access accepts a constant numeric projection such as `pair.0`; tuple indices must be static and in range. Ordinary list/string indexing uses `[...]`.
+- Tuple access accepts a constant numeric projection such as `pair.0`; tuple indices must be static and in range. Ordinary list/string indexing uses `[...]`, and string slicing uses range bounds `s[a..b]`, `s[a..=b]`, `s[..b]`, `s[..=b]`, `s[a..]`, and `s[..]` (desugared to `str_substr`).
 
 ## 5. Type system and runtime semantics
 

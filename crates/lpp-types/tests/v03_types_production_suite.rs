@@ -2159,3 +2159,100 @@ fn function_types_generic_aliases_ternary_and_unary_ops_typecheck() {
         TypeError::Mismatch { .. }
     ));
 }
+
+#[test]
+fn capability_attributes_pure_and_deny_enforce_direct_and_transitive_effects() {
+    // 1. @pure allows calling unannotated pure helpers, arithmetic, strings, collections.
+    let ok_pure = concat!(
+        "def helper(x: Int) -> Int:\n",
+        "    return (x * 2) + 1\n",
+        "\n",
+        "@pure\n",
+        "def compute(a: Int, b: Int) -> Int:\n",
+        "    return helper(a) + b\n",
+        "\n",
+        "@deny(fs, net, exec, ffi)\n",
+        "def log_only(x: Int):\n",
+        "    print(compute(x, 10))\n",
+        "\n",
+        "def main():\n",
+        "    log_only(5)\n",
+    );
+    let (_hir, _out) = check_ok(ok_pure);
+
+    // 2. @pure rejects direct IO / FS / time / rand / unsafe / spawn.
+    assert!(matches!(
+        check_err("@pure\ndef bad_io(x: Int) -> Int:\n    print(x)\n    return x\n"),
+        TypeError::CapabilityDenied {
+            capability: "io",
+            ..
+        }
+    ));
+    assert!(matches!(
+        check_err("@pure\ndef bad_fs() -> Str:\n    return read_file(\"a.txt\")\n"),
+        TypeError::CapabilityDenied {
+            capability: "fs",
+            ..
+        }
+    ));
+    assert!(matches!(
+        check_err("@pure\ndef bad_time() -> Int:\n    return time_ms()\n"),
+        TypeError::CapabilityDenied {
+            capability: "time",
+            ..
+        }
+    ));
+    assert!(matches!(
+        check_err("@pure\ndef bad_unsafe() -> Int:\n    unsafe:\n        return 1\n"),
+        TypeError::CapabilityDenied {
+            capability: "unsafe",
+            ..
+        }
+    ));
+
+    // 3. Transitive call-graph enforcement: @deny(fs) catches indirect read_file via helper.
+    let transitive_fs = concat!(
+        "def leaf() -> Str:\n",
+        "    return read_file(\"secret.txt\")\n",
+        "def middle() -> Str:\n",
+        "    return leaf()\n",
+        "@deny(fs)\n",
+        "def sandboxed() -> Str:\n",
+        "    return middle()\n",
+    );
+    assert!(matches!(
+        check_err(transitive_fs),
+        TypeError::CapabilityDenied {
+            capability: "fs",
+            ..
+        }
+    ));
+
+    // 4. @deny(ffi) rejects calling extern "C" functions (directly and transitively).
+    let ffi_violation = concat!(
+        "extern \"C\":\n",
+        "    def puts(s: Str) -> Int\n",
+        "def wrap(s: Str) -> Int:\n",
+        "    return puts(s)\n",
+        "@deny(ffi)\n",
+        "def untrusted(s: Str) -> Int:\n",
+        "    return wrap(s)\n",
+    );
+    assert!(matches!(
+        check_err(ffi_violation),
+        TypeError::CapabilityDenied {
+            capability: "ffi",
+            ..
+        }
+    ));
+
+    // 5. Invalid capability attribute names are rejected cleanly.
+    assert!(matches!(
+        check_err("@deny(bogus_cap)\ndef f() -> Int:\n    return 0\n"),
+        TypeError::InvalidCapabilityAttribute { .. }
+    ));
+    assert!(matches!(
+        check_err("@pure(fs)\ndef f() -> Int:\n    return 0\n"),
+        TypeError::InvalidCapabilityAttribute { .. }
+    ));
+}

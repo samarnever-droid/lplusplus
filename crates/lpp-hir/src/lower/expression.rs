@@ -637,17 +637,76 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                     )?;
                 }
                 Some(TokenKind::LeftBracket) => {
+                    let bracket_span = self
+                        .peek_span(cursor)
+                        .unwrap_or_else(|| self.cursor_span(cursor));
                     self.advance(cursor);
-                    let index = self.parse_expression(cursor, closure_body)?;
-                    self.expect(cursor, TokenKind::RightBracket, "expected ']' after index")?;
-                    expression = self.wrap_postfix(
-                        expression,
-                        ExpressionKind::Index {
-                            base: expression,
-                            index,
-                        },
-                        cursor,
-                    )?;
+                    if matches!(
+                        self.peek_kind(cursor),
+                        Some(TokenKind::DotDot | TokenKind::DotDotEqual)
+                    ) {
+                        let inclusive = self.consume(cursor, TokenKind::DotDotEqual);
+                        if !inclusive {
+                            self.advance(cursor);
+                        }
+                        let end = if self.peek_kind(cursor) == Some(TokenKind::RightBracket) {
+                            None
+                        } else {
+                            Some(self.parse_expression(cursor, closure_body)?)
+                        };
+                        self.expect(cursor, TokenKind::RightBracket, "expected ']' after slice")?;
+                        expression = self.lower_slice_desugar(
+                            expression,
+                            None,
+                            end,
+                            inclusive,
+                            bracket_span,
+                            cursor,
+                        )?;
+                    } else {
+                        let index = self.parse_expression(cursor, closure_body)?;
+                        if matches!(
+                            self.peek_kind(cursor),
+                            Some(TokenKind::DotDot | TokenKind::DotDotEqual)
+                        ) {
+                            let inclusive = self.consume(cursor, TokenKind::DotDotEqual);
+                            if !inclusive {
+                                self.advance(cursor);
+                            }
+                            let end = if self.peek_kind(cursor) == Some(TokenKind::RightBracket) {
+                                None
+                            } else {
+                                Some(self.parse_expression(cursor, closure_body)?)
+                            };
+                            self.expect(
+                                cursor,
+                                TokenKind::RightBracket,
+                                "expected ']' after slice",
+                            )?;
+                            expression = self.lower_slice_desugar(
+                                expression,
+                                Some(index),
+                                end,
+                                inclusive,
+                                bracket_span,
+                                cursor,
+                            )?;
+                        } else {
+                            self.expect(
+                                cursor,
+                                TokenKind::RightBracket,
+                                "expected ']' after index",
+                            )?;
+                            expression = self.wrap_postfix(
+                                expression,
+                                ExpressionKind::Index {
+                                    base: expression,
+                                    index,
+                                },
+                                cursor,
+                            )?;
+                        }
+                    }
                 }
                 _ => break,
             }
@@ -785,6 +844,85 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             },
             origin: closure_origin,
         })
+    }
+
+    fn lower_slice_desugar(
+        &mut self,
+        base: ExprId,
+        start: Option<ExprId>,
+        end: Option<ExprId>,
+        inclusive: bool,
+        span: Span,
+        cursor: &Cursor,
+    ) -> LowerResult<ExprId> {
+        let origin = self.source_origin(span)?;
+        let start_expr = match start {
+            Some(expr) => expr,
+            None => self.alloc_expression(Expression {
+                kind: ExpressionKind::Literal(Literal::Integer(0)),
+                origin,
+            })?,
+        };
+        let len_expr = match (start, end) {
+            (_, None) => self.alloc_expression(Expression {
+                kind: ExpressionKind::Literal(Literal::Integer(i64::MAX)),
+                origin,
+            })?,
+            (None, Some(end_expr)) => {
+                if inclusive {
+                    let one = self.alloc_expression(Expression {
+                        kind: ExpressionKind::Literal(Literal::Integer(1)),
+                        origin,
+                    })?;
+                    self.alloc_expression(Expression {
+                        kind: ExpressionKind::Binary {
+                            left: end_expr,
+                            operator: BinaryOperator::Add,
+                            right: one,
+                        },
+                        origin,
+                    })?
+                } else {
+                    end_expr
+                }
+            }
+            (Some(start_expr), Some(end_expr)) => {
+                let diff = self.alloc_expression(Expression {
+                    kind: ExpressionKind::Binary {
+                        left: end_expr,
+                        operator: BinaryOperator::Subtract,
+                        right: start_expr,
+                    },
+                    origin,
+                })?;
+                if inclusive {
+                    let one = self.alloc_expression(Expression {
+                        kind: ExpressionKind::Literal(Literal::Integer(1)),
+                        origin,
+                    })?;
+                    self.alloc_expression(Expression {
+                        kind: ExpressionKind::Binary {
+                            left: diff,
+                            operator: BinaryOperator::Add,
+                            right: one,
+                        },
+                        origin,
+                    })?
+                } else {
+                    diff
+                }
+            }
+        };
+        let callee_symbol = self.intern("str_substr", span)?;
+        let callee = self.alloc_expression(Expression {
+            kind: ExpressionKind::Name {
+                symbol: callee_symbol,
+                binding: NameBinding::Unresolved,
+            },
+            origin,
+        })?;
+        let arguments = self.expression_list(&[base, start_expr, len_expr], span)?;
+        self.wrap_postfix(base, ExpressionKind::Call { callee, arguments }, cursor)
     }
 
     fn wrap_postfix(

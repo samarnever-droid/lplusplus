@@ -1921,3 +1921,42 @@ def main():
 8\n30\n200\n35\n-1\n2\nflt-ok\nraw-ok\n22\n",
     );
 }
+
+#[test]
+fn parity_capabilities_algebraic_and_string_slicing() {
+    let src = r#"
+@pure
+def pure_math(x: Int) -> Int:
+    a := (x + 0) * 8 + (x ** 2) + (x ** 1) + (x ** 0) - (x - x)
+    return a + (+x)
+
+@deny(fs, net, exec, ffi, unsafe)
+def format_slices(s: Str) -> Str:
+    p1 := s[0..5]
+    p2 := s[6..=10]
+    p3 := s[..2]
+    p4 := s[..=2]
+    p5 := s[6..]
+    p6 := s[..]
+    return f"{p1}|{p2}|{p3}|{p4}|{p5}|{p6}"
+
+def main():
+    print(pure_math(5))
+    print(pure_math(-4))
+    print_str(format_slices("hello_world"))
+"#;
+    // pure_math(5) = 40 + 25 + 5 + 1 - 0 + 5 = 76
+    // pure_math(-4) = -32 + 16 - 4 + 1 - 0 - 4 = -23
+    // slices of "hello_world" (len 11):
+    // [0..5]  = "hello"
+    // [6..=10]= "world"
+    // [..2]   = "he"
+    // [..=2]  = "hel"
+    // [6..]   = "world"
+    // [..]    = "hello_world"
+    assert_all_4_parity(
+        "capabilities_algebraic_slicing",
+        src,
+        "76\n-23\nhello|world|he|hel|world|hello_world\n",
+    );
+}

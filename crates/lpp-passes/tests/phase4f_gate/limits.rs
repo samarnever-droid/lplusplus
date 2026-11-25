@@ -288,7 +288,12 @@ fn optimization_pipeline_preserves_shape_on_a_gate_program() {
     let outcome = optimization_passes().run(&mut program, &types).unwrap();
     assert_eq!(
         outcome.executed,
-        ["const-fold", "const-prop", "branch-fold"]
+        [
+            "const-fold",
+            "const-prop",
+            "algebraic-simplify",
+            "branch-fold"
+        ]
     );
     assert_eq!(shape(&program), before_shape);
 }

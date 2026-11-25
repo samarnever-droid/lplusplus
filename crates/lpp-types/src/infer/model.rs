@@ -217,6 +217,13 @@ pub enum TypeError {
     InvalidKernelAttribute {
         message: &'static str,
     },
+    CapabilityDenied {
+        capability: &'static str,
+        detail: String,
+    },
+    InvalidCapabilityAttribute {
+        attribute: String,
+    },
 }
 
 impl fmt::Display for TypeError {
@@ -352,6 +359,14 @@ impl fmt::Display for TypeError {
             Self::InvalidKernelAttribute { message } => {
                 write!(formatter, "[E3203] {message}")
             }
+            Self::CapabilityDenied { capability, detail } => write!(
+                formatter,
+                "[E3204] capability `{capability}` is denied in this function ({detail})"
+            ),
+            Self::InvalidCapabilityAttribute { attribute } => write!(
+                formatter,
+                "[E3205] invalid capability attribute `{attribute}`; valid capabilities are: fs, net, exec, env, io, ffi, unsafe, spawn, time, rand, gui, sys"
+            ),
         }
     }
 }

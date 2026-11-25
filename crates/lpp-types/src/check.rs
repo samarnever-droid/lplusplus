@@ -212,6 +212,7 @@ impl<'hir> TypeChecker<'hir> {
         for (item_id, item) in self.package.items.enumerate() {
             self.validate_item_safety(item_id, *item)?;
         }
+        self.validate_package_capabilities()?;
         self.normalize_assignments()?;
         let (trait_index, trait_diagnostics) =
             TraitIndex::from_hir(self.package, &self.assignments, &self.interner);

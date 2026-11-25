@@ -333,7 +333,7 @@ impl<'hir> TypeChecker<'hir> {
         )
     }
 
-    fn type_is_raw_pointer(&mut self, type_id: TypeId) -> bool {
+    pub(super) fn type_is_raw_pointer(&mut self, type_id: TypeId) -> bool {
         let Ok(resolved) = self
             .inference
             .resolve(&self.interner, type_id, &mut self.budget)

@@ -7,12 +7,14 @@
 //! rewrite an instruction's kind or a block's terminator in place —
 //! so program shape (IDs, block and instruction order) is preserved.
 
+mod algebraic;
 mod analysis;
 mod branchfold;
 mod constfold;
 mod constprop;
 mod inline;
 
+pub use algebraic::AlgebraicSimplifyPass;
 pub use analysis::{is_primitive_constant, single_def_constants};
 pub use branchfold::BranchFoldPass;
 pub use constfold::{ConstFoldPass, fold_binary, fold_unary};
