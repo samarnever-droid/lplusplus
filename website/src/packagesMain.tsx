@@ -287,10 +287,10 @@ export function PackagesApp() {
                 CLI Publishing
               </span>
               <p className="text-[11px] text-white/40">
-                Log in and publish packages natively with the L++ CLI:
+                Verify and publish packages natively with the Keel CLI:
               </p>
               <pre className="rounded-lg bg-black/60 p-2.5 text-[10px] text-acid overflow-x-auto border border-white/10">
-                lpp login lpp_pub_...<br />lpp publish
+                keel check &amp;&amp; keel test<br />keel publish
               </pre>
             </div>
           </aside>
@@ -389,7 +389,7 @@ export function PackagesApp() {
                         ) : (
                           <Terminal className="h-3.5 w-3.5" />
                         )}
-                        {copiedText === `add-${pkg.name}` ? "Copied" : `lpp add ${pkg.name}`}
+                        {copiedText === `add-${pkg.name}` ? "Copied" : `keel add ${pkg.name}`}
                       </button>
                     </div>
                   </div>
@@ -430,9 +430,9 @@ export function PackagesApp() {
                   Installation
                 </span>
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-white/15 bg-black p-3 font-mono text-xs">
-                  <code className="text-acid">lpp add {selectedPackage.name}</code>
+                  <code className="text-acid">keel add {selectedPackage.name}</code>
                   <button
-                    onClick={() => copy(`lpp add ${selectedPackage.name}`, "modal-copy")}
+                    onClick={() => copy(`keel add ${selectedPackage.name}`, "modal-copy")}
                     className="flex items-center gap-1 text-white/60 hover:text-white"
                   >
                     {copiedText === "modal-copy" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}

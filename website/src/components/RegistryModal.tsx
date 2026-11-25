@@ -315,7 +315,7 @@ Publish Guide
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          copyToClipboard(`lpp add ${pkg.name}`, `copy-${pkg.name}`);
+                          copyToClipboard(`keel add ${pkg.name}`, `copy-${pkg.name}`);
                         }}
                         className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-mono text-white/70 hover:border-acid/40 hover:text-acid shrink-0"
                       >
@@ -324,7 +324,7 @@ Publish Guide
                         ) : (
                           <Copy className="h-3 w-3" />
                         )}
-                        {copiedText === `copy-${pkg.name}` ? "Added" : "lpp add"}
+                        {copiedText === `copy-${pkg.name}` ? "Copied" : "keel add"}
                       </button>
                     </div>
 
@@ -367,9 +367,9 @@ Publish Guide
                     Install Package
                   </span>
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/60 px-3.5 py-2.5 font-mono text-xs">
-                    <span className="text-acid">lpp add {selectedPackage.name}</span>
+                    <span className="text-acid">keel add {selectedPackage.name}</span>
                     <button
-                      onClick={() => copyToClipboard(`lpp add ${selectedPackage.name}`, "detail-install")}
+                      onClick={() => copyToClipboard(`keel add ${selectedPackage.name}`, "detail-install")}
                       className="flex items-center gap-1 text-white/60 hover:text-white"
                     >
                       {copiedText === "detail-install" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}

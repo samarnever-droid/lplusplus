@@ -59,7 +59,7 @@ const STEPS = [
   {
     icon: Play,
     title: "Choose file or package mode",
-    body: "Use lpp emit file.lpp for source artifacts, lpp build for packages, or LPP_LINKER=direct lpp build on verified Linux x86-64 projects.",
+    body: "Use lpp main.lpp --run for single files, keel new / keel build for projects, or keel add <pkg> && keel install for packages.",
   },
 ];
 

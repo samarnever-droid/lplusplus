@@ -172,7 +172,7 @@ export function PackagesShowcase() {
                 </div>
 
                 <button
-                  onClick={() => copy(`lpp add ${pkg.name}`, pkg.name)}
+                  onClick={() => copy(`keel add ${pkg.name}`, pkg.name)}
                   className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 py-2 font-mono text-xs text-white/80 hover:border-acid/50 hover:text-acid transition-all"
                 >
                   {copiedId === pkg.name ? (
@@ -180,7 +180,7 @@ export function PackagesShowcase() {
                   ) : (
                     <Terminal className="h-3.5 w-3.5" />
                   )}
-                  {copiedId === pkg.name ? "Copied Command" : `lpp add ${pkg.name}`}
+                  {copiedId === pkg.name ? "Copied Command" : `keel add ${pkg.name}`}
                 </button>
               </div>
             </div>
