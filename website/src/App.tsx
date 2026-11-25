@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
+import Playground from "./components/Playground";
 import Marquee from "./components/Marquee";
 import Pillars from "./components/Pillars";
 import MemoryModel from "./components/MemoryModel";
@@ -27,6 +28,7 @@ export default function App() {
       <main>
         <Hero />
         <Marquee />
+        <Playground />
         <Pillars />
         <MemoryModel />
         <Showcase />

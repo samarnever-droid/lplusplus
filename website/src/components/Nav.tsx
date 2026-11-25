@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Menu, X, ArrowUpRight, Package, Sparkles } from "lucide-react";
+import { Menu, X, ArrowUpRight, Package, Search, Sparkles } from "lucide-react";
 import {
   OrganizationSwitcher,
   SignInButton,
@@ -9,14 +9,14 @@ import {
   useAuth,
 } from "@clerk/react";
 import { EASE } from "../lib/ui";
+import CommandPalette from "./CommandPalette";
 
 const LINKS = [
+  { label: "Playground", href: `${import.meta.env.BASE_URL}#playground` },
   { label: "Academy", href: `${import.meta.env.BASE_URL}academy.html` },
   { label: "Packages", href: `${import.meta.env.BASE_URL}packages.html` },
-  { label: "Language", href: "#language" },
   { label: "Memory", href: "#memory" },
   { label: "Speed", href: "#performance" },
-  { label: "Stdlib", href: "#stdlib" },
   { label: "Install", href: "#install" },
 ];
 
@@ -28,6 +28,7 @@ interface NavProps {
 export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { isLoaded, isSignedIn } = useAuth();
 
   useEffect(() => {
@@ -35,6 +36,17 @@ export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
     fn();
     window.addEventListener("scroll", fn, { passive: true });
     return () => window.removeEventListener("scroll", fn);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const openAuth = () => {
@@ -86,6 +98,17 @@ export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
 
         {/* Right Actions */}
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="hidden items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/20 hover:text-white md:inline-flex"
+            aria-label="Open command palette"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span>Search</span>
+            <kbd className="rounded border border-white/15 bg-white/[0.06] px-1 font-mono text-[10px] text-zinc-300">
+              ⌘K
+            </kbd>
+          </button>
           {onOpenRegistry && (
             <button
               onClick={onOpenRegistry}
@@ -175,6 +198,7 @@ export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
           </div>
         </div>
       )}
+      <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </motion.header>
   );
 }

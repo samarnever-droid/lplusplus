@@ -23,49 +23,67 @@ export function getClerkPublishableKey(): string {
 export const CLERK_APPEARANCE = {
   baseTheme: dark,
   variables: {
-    colorPrimary: "#6c47ff",
+    colorPrimary: "#7c5cff",
     colorTextOnPrimaryBackground: "#ffffff",
-    colorBackground: "#111116",
-    colorInputBackground: "#09090b",
+    colorBackground: "#181820",
+    colorInputBackground: "#23232f",
     colorInputText: "#ffffff",
     colorText: "#ffffff",
-    colorTextSecondary: "#d4d4d8",
-    colorNeutral: "#e4e4e7",
+    colorTextSecondary: "#e4e4e7",
+    colorNeutral: "#f4f4f5",
     colorDanger: "#f87171",
     colorSuccess: "#34d399",
     borderRadius: "0.75rem",
     fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
   },
   elements: {
-    card: "bg-[#111116] border border-white/15 shadow-2xl",
-    headerTitle: "text-white font-semibold tracking-tight",
-    headerSubtitle: "text-zinc-300",
-    dividerLine: "bg-white/15",
-    dividerText: "text-zinc-400",
-    socialButtonsBlockButton:
-      "bg-white/[0.06] border border-white/15 text-white hover:bg-white/[0.12]",
-    socialButtonsBlockButtonText: "text-white font-medium",
-    formFieldLabel: "text-zinc-200 font-medium",
-    formFieldInput:
-      "bg-[#09090b] border border-white/20 text-white placeholder:text-zinc-500 focus:border-[#6c47ff]",
-    formButtonPrimary:
-      "bg-[#6c47ff] text-white font-semibold hover:bg-[#7c5cff] shadow-lg shadow-[#6c47ff]/30",
-    footer: "bg-[#0d0d12] border-t border-white/10",
-    footerActionText: "text-zinc-300",
-    footerActionLink: "text-[#a78bfa] font-medium hover:text-white",
-    identityPreviewText: "text-white",
-    identityPreviewEditButton: "text-[#a78bfa]",
-    userButtonPopoverCard: "bg-[#111116] border border-white/15 shadow-2xl",
-    userButtonPopoverActionButton: "text-zinc-100 hover:bg-white/10",
-    userButtonPopoverActionButtonText: "text-zinc-100",
-    userButtonPopoverActionButtonIcon: "text-zinc-300",
-    userButtonPopoverFooter: "bg-[#0d0d12] border-t border-white/10",
-    organizationSwitcherTrigger:
-      "border border-white/15 bg-white/[0.06] text-white hover:bg-white/[0.12] rounded-lg px-2.5 py-1.5",
-    organizationSwitcherPopoverCard:
-      "bg-[#111116] border border-white/15 shadow-2xl",
-    navbarButton: "text-zinc-200 hover:text-white hover:bg-white/5",
-    pageScrollBox: "bg-[#111116]",
+    card: {
+      backgroundColor: "#181820",
+      border: "1px solid rgba(255, 255, 255, 0.14)",
+      boxShadow: "0 24px 60px rgba(0, 0, 0, 0.75)",
+    },
+    formFieldInput: {
+      backgroundColor: "#23232f",
+      color: "#ffffff",
+      borderColor: "rgba(255, 255, 255, 0.18)",
+    },
+    formFieldLabel: {
+      color: "#f4f4f5",
+    },
+    socialButtonsBlockButton: {
+      backgroundColor: "#23232f",
+      color: "#ffffff",
+      borderColor: "rgba(255, 255, 255, 0.18)",
+    },
+    socialButtonsBlockButtonText: {
+      color: "#ffffff",
+    },
+    headerTitle: {
+      color: "#ffffff",
+    },
+    headerSubtitle: {
+      color: "#d4d4d8",
+    },
+    dividerText: {
+      color: "#d4d4d8",
+    },
+    footerActionText: {
+      color: "#d4d4d8",
+    },
+    footerActionLink: {
+      color: "#a78bfa",
+    },
+    userButtonPopoverCard: {
+      backgroundColor: "#181820",
+      border: "1px solid rgba(255, 255, 255, 0.14)",
+    },
+    organizationSwitcherTrigger: {
+      color: "#ffffff",
+      backgroundColor: "#23232f",
+      border: "1px solid rgba(255, 255, 255, 0.16)",
+      borderRadius: "0.5rem",
+      padding: "0.35rem 0.65rem",
+    },
   },
 };
 
