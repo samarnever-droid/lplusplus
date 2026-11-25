@@ -13,7 +13,7 @@ import {
   LogOut,
   UserCheck,
 } from "lucide-react";
-import { SignIn, useAuth, useClerk, useUser } from "@clerk/react";
+import { SignInButton, SignUpButton, useAuth, useClerk, useUser } from "@clerk/react";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -178,12 +178,43 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex justify-center">
-                    <SignIn
-                      routing="hash"
-                      fallbackRedirectUrl={`${import.meta.env.BASE_URL}account.html`}
-                      signUpFallbackRedirectUrl={`${import.meta.env.BASE_URL}account.html`}
-                    />
+                  <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-6 text-center">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[#6c47ff]/40 bg-[#6c47ff]/15 text-[#a78bfa]">
+                      <Key className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-display text-lg font-semibold text-white">
+                        Sign in with Clerk Pro
+                      </h3>
+                      <p className="mt-1 text-sm text-zinc-400">
+                        Use GitHub, Email OTP, Passkeys, or TOTP MFA on{" "}
+                        <span className="font-mono text-[#a78bfa]">clerk.lplusplus.bond</span>.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                      <SignInButton
+                        mode="modal"
+                        fallbackRedirectUrl={`${import.meta.env.BASE_URL}account.html`}
+                      >
+                        <button
+                          onClick={onClose}
+                          className="clerk-btn-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium"
+                        >
+                          Sign In
+                        </button>
+                      </SignInButton>
+                      <SignUpButton
+                        mode="modal"
+                        fallbackRedirectUrl={`${import.meta.env.BASE_URL}account.html`}
+                      >
+                        <button
+                          onClick={onClose}
+                          className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-5 py-2.5 text-sm font-medium text-white hover:bg-white/[0.08]"
+                        >
+                          Create Account
+                        </button>
+                      </SignUpButton>
+                    </div>
                   </div>
                 )}
               </div>

@@ -21,10 +21,12 @@ import {
   Users,
 } from "lucide-react";
 import {
+  AuthenticateWithRedirectCallback,
   CreateOrganization,
   OrganizationProfile,
   OrganizationSwitcher,
   SignIn,
+  SignUp,
   UserButton,
   UserProfile,
   useAuth,
@@ -138,9 +140,25 @@ function AccountApp() {
   const { organization } = useOrganization();
 
   const [copied, setCopied] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">(() =>
+    typeof window !== "undefined" && window.location.pathname.includes("sign-up")
+      ? "sign-up"
+      : "sign-in"
+  );
   const [studioTab, setStudioTab] = useState<"studio" | "team" | "git" | "token" | "security">(
     "studio"
   );
+
+  if (typeof window !== "undefined" && window.location.pathname.includes("sso-callback")) {
+    return (
+      <div className="min-h-screen bg-[#09090b] text-white flex items-center justify-center p-6">
+        <AuthenticateWithRedirectCallback
+          signInFallbackRedirectUrl="/account.html"
+          signUpFallbackRedirectUrl="/account.html"
+        />
+      </div>
+    );
+  }
 
   // Interactive Manifest & Release Builder state
   const [pkgName, setPkgName] = useState("lpp-my-pkg");
@@ -597,8 +615,44 @@ ${pkgDeps.trim()}
                   </p>
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/35 p-1">
+                <button
+                  onClick={() => setAuthMode("sign-in")}
+                  className={`rounded-lg px-3 py-2 font-mono text-xs font-semibold transition-all ${
+                    authMode === "sign-in"
+                      ? "clerk-btn-primary"
+                      : "text-white/65 hover:text-white"
+                  }`}
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => setAuthMode("sign-up")}
+                  className={`rounded-lg px-3 py-2 font-mono text-xs font-semibold transition-all ${
+                    authMode === "sign-up"
+                      ? "clerk-btn-primary"
+                      : "text-white/65 hover:text-white"
+                  }`}
+                >
+                  Sign Up
+                </button>
+              </div>
               <div className="flex justify-center">
-                <SignIn routing="hash" />
+                {authMode === "sign-in" ? (
+                  <SignIn
+                    routing="hash"
+                    signUpUrl="/sign-up"
+                    fallbackRedirectUrl="/account.html"
+                    signUpFallbackRedirectUrl="/account.html"
+                  />
+                ) : (
+                  <SignUp
+                    routing="hash"
+                    signInUrl="/sign-in"
+                    fallbackRedirectUrl="/account.html"
+                    signInFallbackRedirectUrl="/account.html"
+                  />
+                )}
               </div>
             </div>
 

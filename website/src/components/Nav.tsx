@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Menu, X, ArrowUpRight, Package, Sparkles } from "lucide-react";
-import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/react";
+import {
+  OrganizationSwitcher,
+  SignInButton,
+  SignUpButton,
+  UserButton,
+  useAuth,
+} from "@clerk/react";
 import { EASE } from "../lib/ui";
 
 const LINKS = [
@@ -112,19 +118,17 @@ export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
             </>
           ) : (
             <>
-              <button
-                onClick={openAuth}
-                className="hidden rounded-lg px-3 py-1.5 text-[13px] font-medium text-zinc-300 transition-colors hover:text-white sm:inline-flex"
-              >
-                Sign in
-              </button>
-              <a
-                href="#install"
-                className="clerk-btn-primary group hidden items-center gap-1 rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-all sm:inline-flex"
-              >
-                Get started
-                <ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-              </a>
+              <SignInButton mode="modal" fallbackRedirectUrl={`${import.meta.env.BASE_URL}account.html`}>
+                <button className="hidden rounded-lg px-3 py-1.5 text-[13px] font-medium text-zinc-300 transition-colors hover:text-white sm:inline-flex">
+                  Sign in
+                </button>
+              </SignInButton>
+              <SignUpButton mode="modal" fallbackRedirectUrl={`${import.meta.env.BASE_URL}account.html`}>
+                <button className="clerk-btn-primary group hidden items-center gap-1 rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-all sm:inline-flex">
+                  Sign up
+                  <ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </button>
+              </SignUpButton>
             </>
           )}
 
