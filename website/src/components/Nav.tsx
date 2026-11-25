@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Menu, X, ArrowUpRight, Package, Key, Sparkles } from "lucide-react";
-import { UserButton, useAuth } from "@clerk/react";
+import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/react";
 import { EASE } from "../lib/ui";
 
 const LINKS = [
@@ -84,6 +84,13 @@ export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
           </button>
           {isLoaded && isSignedIn ? (
             <>
+              <div className="hidden xl:flex items-center">
+                <OrganizationSwitcher
+                  hidePersonal={false}
+                  afterSelectOrganizationUrl={`${import.meta.env.BASE_URL}account.html`}
+                  afterSelectPersonalUrl={`${import.meta.env.BASE_URL}account.html`}
+                />
+              </div>
               <a
                 href={`${import.meta.env.BASE_URL}account.html`}
                 className="hidden items-center gap-1.5 rounded-lg border border-acid/40 bg-acid/10 px-3 py-1.5 font-mono text-[12px] text-acid transition-all hover:bg-acid/20 sm:flex"

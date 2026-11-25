@@ -18,12 +18,17 @@ import {
   Terminal,
   UploadCloud,
   UserCheck,
+  Users,
 } from "lucide-react";
 import {
+  CreateOrganization,
+  OrganizationProfile,
+  OrganizationSwitcher,
   SignIn,
   UserButton,
   UserProfile,
   useAuth,
+  useOrganization,
   useUser,
 } from "@clerk/react";
 import Footer from "./components/Footer";
@@ -128,11 +133,14 @@ function CopyCommand({
 }
 
 function AccountApp() {
-  const { isLoaded, isSignedIn, userId, getToken } = useAuth();
+  const { isLoaded, isSignedIn, userId, orgId, orgRole, getToken } = useAuth();
   const { user } = useUser();
+  const { organization } = useOrganization();
 
   const [copied, setCopied] = useState<string | null>(null);
-  const [studioTab, setStudioTab] = useState<"studio" | "git" | "token" | "security">("studio");
+  const [studioTab, setStudioTab] = useState<"studio" | "team" | "git" | "token" | "security">(
+    "studio"
+  );
 
   // Interactive Manifest & Release Builder state
   const [pkgName, setPkgName] = useState("lpp-my-pkg");
@@ -155,7 +163,12 @@ function AccountApp() {
   };
 
   const publisherDisplay =
-    user?.fullName || user?.username || user?.primaryEmailAddress?.emailAddress || "L++ Developer";
+    organization?.name ||
+    user?.fullName ||
+    user?.username ||
+    user?.primaryEmailAddress?.emailAddress ||
+    "L++ Developer";
+  const publisherHandle = user?.username ? `@${user.username}` : null;
   const publisherEmail = user?.primaryEmailAddress?.emailAddress || "";
 
   const generatedManifest = `[package]
@@ -165,7 +178,7 @@ edition = "2024"
 license = "${pkgLicense.trim() || "MIT"}"
 authors = ["${publisherDisplay}${publisherEmail ? ` <${publisherEmail}>` : ""}"]
 description = "${pkgDescription.replace(/"/g, '\\"')}"
-
+${organization?.slug ? `namespace = "${organization.slug}"\n` : ""}
 [dependencies]
 ${pkgDeps.trim()}
 `;
@@ -217,6 +230,7 @@ ${pkgDeps.trim()}
             <span className="font-mono text-xs">Back to Main</span>
           </a>
           <div className="flex items-center gap-3">
+            {isLoaded && isSignedIn && <OrganizationSwitcher hidePersonal={false} />}
             <div className="hidden items-center gap-2 rounded-full border border-acid/25 bg-acid/10 px-3 py-1 font-mono text-xs text-acid sm:flex">
               <ShieldCheck className="h-3.5 w-3.5" />
               {isLoaded && isSignedIn ? "Clerk Pro Publisher Studio" : "Dual-Option Publishing"}
@@ -291,9 +305,10 @@ ${pkgDeps.trim()}
             <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
               {[
                 { id: "studio", label: "Publish Studio", icon: UploadCloud },
+                { id: "team", label: "Team & Orgs (Clerk Pro)", icon: Users },
                 { id: "git", label: "Direct Keel Git CLI", icon: GitBranch },
                 { id: "token", label: "Session & Edge API", icon: Activity },
-                { id: "security", label: "Account & Security (Clerk Pro)", icon: Shield },
+                { id: "security", label: "Passkeys, MFA & Profile", icon: Shield },
               ].map((t) => {
                 const Icon = t.icon;
                 return (
@@ -437,6 +452,33 @@ ${pkgDeps.trim()}
               </div>
             )}
 
+            {studioTab === "team" && (
+              <div className="space-y-6">
+                <div className="rounded-3xl border border-acid/20 bg-acid/[0.03] p-5 flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h2 className="font-mono text-base font-bold text-white">
+                      {organization
+                        ? `Active Team Workspace: ${organization.name}`
+                        : "Personal Publisher Account"}
+                    </h2>
+                    <p className="mt-1 font-mono text-xs text-white/60">
+                      {organization
+                        ? `Slug: ${organization.slug || "none"} · Role: ${orgRole || "member"} · Org ID: ${orgId}`
+                        : "Create or select a Clerk Pro Organization to publish shared L++ packages with team RBAC roles and member invites."}
+                    </p>
+                  </div>
+                  <OrganizationSwitcher hidePersonal={false} />
+                </div>
+                <div className="flex justify-center rounded-3xl border border-white/10 bg-white/[0.02] p-4 sm:p-6">
+                  {organization ? (
+                    <OrganizationProfile routing="hash" />
+                  ) : (
+                    <CreateOrganization routing="hash" />
+                  )}
+                </div>
+              </div>
+            )}
+
             {studioTab === "git" && (
               <div className="space-y-3">
                 {GIT_COMMANDS.map((item) => (
@@ -466,9 +508,27 @@ ${pkgDeps.trim()}
                       <span className="text-white/45">User ID</span>
                       <span className="text-white">{userId}</span>
                     </div>
+                    {publisherHandle && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-white/45">Publisher Handle</span>
+                        <span className="text-acid">{publisherHandle}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between gap-2">
                       <span className="text-white/45">Primary Email</span>
                       <span className="text-acid">{publisherEmail || "None"}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-white/45">Active Org / Role</span>
+                      <span className="text-violet-300">
+                        {organization ? `${organization.name} (${orgRole || "member"})` : "Personal"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-white/45">Clerk Pro Features</span>
+                      <span className="text-emerald-300">
+                        White-label · Orgs · Passkeys · TOTP MFA · Multi-Session
+                      </span>
                     </div>
                     <div className="flex justify-between gap-2">
                       <span className="text-white/45">Frontend API</span>
