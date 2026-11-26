@@ -8,6 +8,7 @@
 import cspan
 import native_types
 import translator
+import c_func_translator
 
 def run_selftest() -> Int:
     # 1. Verify compact 16-byte CSpan layout (vs legacy 64-byte CPtr + 88-byte side record)
@@ -72,7 +73,14 @@ def run_selftest() -> Int:
         print_str("FAIL: missing translated sum_pair")
         return 1
 
-    print_str("c2lpp v0.5.0 selftest OK (CSpan=16B, FastHandle=8B, direct native mapping)")
+    # 6. Verify pure-L++ C implementation translator (recursive structs + null sentinel)
+    c_impl := "typedef struct Node {\n    struct Node* next;\n    int val;\n} Node;\nstatic int list_len(const Node* n) {\n    int count = 0;\n    while (n != NULL) {\n        count++;\n        n = n->next;\n    }\n    return count;\n}\n"
+    impl_out := c2lpp_translate_impl(c_impl)
+    if !str_contains(impl_out, "def Node_null() -> Node:") || !str_contains(impl_out, "while !n.is_null:"):
+        print_str("FAIL: c2lpp_translate_impl recursive struct translation")
+        return 1
+
+    print_str("c2lpp v0.6.0 selftest OK (CSpan=16B, FastHandle=8B, direct native mapping + pure-L++ C translator)")
     return 0
 
 def run_bench() -> Int:
@@ -111,6 +119,16 @@ def main():
         return
     if first == "--bench":
         run_bench()
+        return
+
+    if first == "--translate" && argc >= 3:
+        src := read_file(args_get(2))
+        translated := c2lpp_translate_impl(src)
+        if argc >= 5 && args_get(3) == "-o":
+            write_file(args_get(4), translated)
+            print_str(str_concat("wrote ", args_get(4)))
+        else:
+            print_str(translated)
         return
 
     src := read_file(first)
