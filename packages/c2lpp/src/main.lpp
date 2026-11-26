@@ -9,6 +9,80 @@ import cspan
 import native_types
 import translator
 import c_func_translator
+import clang_ast_translator
+
+extern "C":
+    def system(cmd: Str) -> Int
+
+def path_stem(p: Str) -> Str:
+    mut last_sep := -1
+    mut i := 0
+    n := str_len(p)
+    while i < n:
+        ch := str_substr(p, i, 1)
+        if ch == "/" || ch == "\\":
+            last_sep = i
+        i = i + 1
+    base := str_substr(p, last_sep + 1, n - last_sep - 1)
+    dot := str_find(base, ".")
+    if dot > 0:
+        return str_substr(base, 0, dot)
+    return base
+
+def path_dir(p: Str) -> Str:
+    mut last_sep := -1
+    mut i := 0
+    n := str_len(p)
+    while i < n:
+        ch := str_substr(p, i, 1)
+        if ch == "/" || ch == "\\":
+            last_sep = i
+        i = i + 1
+    if last_sep < 0:
+        return "."
+    return str_substr(p, 0, last_sep)
+
+def discover_source_deps(in_path: Str, raw_c: Str, inc_dirs: List[Str]) -> List[Str]:
+    # Discover local `#include "foo.h"` headers that have a sibling `foo.c` source file available!
+    mut deps := list_new()
+    mut seen := map_new()
+    self_stem := path_stem(in_path)
+    map_put(seen, self_stem, 1)
+    base_dir := path_dir(in_path)
+    lines := str_lines(raw_c)
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        t := str_trim(lines[i])
+        i = i + 1
+        if str_starts_with(t, "#include \""):
+            rest := str_substr(t, 10, str_len(t) - 10)
+            q := str_find(rest, "\"")
+            if q > 2:
+                hdr := str_substr(rest, 0, q)
+                if str_ends_with(hdr, ".h"):
+                    c_rel := str_concat(str_substr(hdr, 0, str_len(hdr) - 2), ".c")
+                    dstem := path_stem(c_rel)
+                    if !map_has(seen, dstem):
+                        cand0 := str_concat(base_dir, str_concat("/", c_rel))
+                        if file_exists(cand0) != 0:
+                            map_put(seen, dstem, 1)
+                            list_push(deps, cand0)
+                        else:
+                            mut di := 0
+                            while di < len(inc_dirs):
+                                cand := str_concat(inc_dirs[di], str_concat("/", c_rel))
+                                if file_exists(cand) != 0:
+                                    map_put(seen, dstem, 1)
+                                    list_push(deps, cand)
+                                    break
+                                di = di + 1
+    return deps
+
+def path_with_h(p: Str) -> Str:
+    if str_ends_with(p, ".c"):
+        return str_concat(str_substr(p, 0, str_len(p) - 2), ".h")
+    return ""
 
 def run_selftest() -> Int:
     # 1. Verify compact 16-byte CSpan layout (vs legacy 64-byte CPtr + 88-byte side record)
@@ -80,7 +154,7 @@ def run_selftest() -> Int:
         print_str("FAIL: c2lpp_translate_impl recursive struct translation")
         return 1
 
-    print_str("c2lpp v0.6.0 selftest OK (CSpan=16B, FastHandle=8B, direct native mapping + pure-L++ C translator)")
+    print_str("c2lpp v0.7.0 selftest OK (CSpan=16B, FastHandle=8B, Pure-L++ Clang AST + Auto-Deps + OS Bridge)")
     return 0
 
 def run_bench() -> Int:
@@ -122,11 +196,73 @@ def main():
         return
 
     if first == "--translate" && argc >= 3:
-        src := read_file(args_get(2))
-        translated := c2lpp_translate_impl(src)
-        if argc >= 5 && args_get(3) == "-o":
-            write_file(args_get(4), translated)
-            print_str(str_concat("wrote ", args_get(4)))
+        in_path := args_get(2)
+        mut out_path := ""
+        mut auto_deps := false
+        mut clang_flags := list_new()
+        mut inc_dirs := list_new()
+        mut ai := 3
+        while ai < argc:
+            a := args_get(ai)
+            if a == "-o" && ai + 1 < argc:
+                out_path = args_get(ai + 1)
+                ai = ai + 2
+                continue
+            if a == "--auto-deps":
+                auto_deps = true
+                ai = ai + 1
+                continue
+            if str_starts_with(a, "-I") && str_len(a) > 2:
+                list_push(inc_dirs, str_substr(a, 2, str_len(a) - 2))
+            list_push(clang_flags, a)
+            ai = ai + 1
+        flags_str := str_join(clang_flags, " ")
+        tmp_ast := "/tmp/c2lpp_clang_ast.json"
+        cmd := str_concat("clang -Xclang -ast-dump=json -fsyntax-only ", str_concat(flags_str, str_concat(" ", str_concat(in_path, str_concat(" > ", str_concat(tmp_ast, " 2>/dev/null"))))))
+        rc := system(cmd)
+        raw_c := read_file(in_path)
+        mut translated := ""
+        if rc == 0 && file_exists(tmp_ast) != 0:
+            ast_json := read_file(tmp_ast)
+            h_path := path_with_h(in_path)
+            mut raw_h := ""
+            if str_len(h_path) > 0 && file_exists(h_path) != 0:
+                raw_h = read_file(h_path)
+            translated = clang_ast_translate(ast_json, path_stem(in_path), raw_c, raw_h)
+            if auto_deps:
+                deps := discover_source_deps(in_path, raw_c, inc_dirs)
+                mut imported_fns := map_new()
+                mut import_mods := list_new()
+                mut di := 0
+                while di < len(deps):
+                    dep_c := deps[di]
+                    dep_stem := path_stem(dep_c)
+                    dep_ast := "/tmp/c2lpp_dep_ast.json"
+                    dep_cmd := str_concat("clang -Xclang -ast-dump=json -fsyntax-only ", str_concat(flags_str, str_concat(" ", str_concat(dep_c, str_concat(" > ", str_concat(dep_ast, " 2>/dev/null"))))))
+                    drc := system(dep_cmd)
+                    if drc == 0 && file_exists(dep_ast) != 0:
+                        d_json := read_file(dep_ast)
+                        d_raw_c := read_file(dep_c)
+                        d_h := path_with_h(dep_c)
+                        mut d_raw_h := ""
+                        if str_len(d_h) > 0 && file_exists(d_h) != 0:
+                            d_raw_h = read_file(d_h)
+                        dep_lpp := clang_ast_translate(d_json, dep_stem, d_raw_c, d_raw_h)
+                        cat_collect_translated_fn_names(dep_lpp, imported_fns)
+                        list_push(import_mods, str_concat(dep_stem, ""))
+                        mut dep_out := str_concat(path_dir(out_path), str_concat("/", str_concat(dep_stem, ".lpp")))
+                        if str_len(out_path) == 0:
+                            dep_out = str_concat(dep_stem, ".lpp")
+                        write_file(dep_out, dep_lpp)
+                        print_str(str_concat("auto-translated C dependency -> ", dep_out))
+                    di = di + 1
+                if len(import_mods) > 0:
+                    translated = cat_strip_imported_externs(translated, imported_fns, import_mods)
+        else:
+            translated = c2lpp_translate_impl(raw_c)
+        if str_len(out_path) > 0:
+            write_file(out_path, translated)
+            print_str(str_concat("wrote ", out_path))
         else:
             print_str(translated)
         return

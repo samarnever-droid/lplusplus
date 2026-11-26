@@ -1,0 +1,301 @@
+# json_ast.lpp — O(N) Pure-L++ Clang 18 JSON AST Parser & Flat Arena
+#
+# Clang's `-Xclang -ast-dump=json` emits pretty-printed JSON (one property per line).
+# Using `str_find` to jump past SDK/system headers + `str_lines` on the target slice
+# makes parsing 59 MB Vulkan-Loader AST dumps strictly O(N) (~30 ms in pure L++).
+
+struct AstNode:
+    id_str: Str
+    kind: Str
+    name: Str
+    qual_type: Str
+    desug_type: Str
+    opcode: Str
+    cast_kind: Str
+    val_str: Str
+    is_postfix: Bool
+    is_implicit: Bool
+    ref_name: Str
+    ref_kind: Str
+    owned_tag_id: Str
+    arg_type: Str
+    loc_file: Str
+    children: List[Int]
+
+def jl_extract_val(line: Str) -> Str:
+    # Given `"key": "val",` or `"key": 123,` or `"key": true,` returns the unquoted value
+    col := str_find(line, ":")
+    if col < 0:
+        return ""
+    mut v := str_trim(str_substr(line, col + 1, str_len(line) - col - 1))
+    if str_ends_with(v, ","):
+        v = str_trim(str_substr(v, 0, str_len(v) - 1))
+    if str_len(v) >= 2 && str_starts_with(v, "\"") && str_ends_with(v, "\""):
+        raw := str_substr(v, 1, str_len(v) - 2)
+        mut u := str_replace(raw, "\\\"", "\"")
+        u = str_replace(u, "\\\\", "\\")
+        return u
+    return v
+
+def jl_extract_raw_str_val(line: Str) -> Str:
+    # Preserves inner escapes for C StringLiteral `"value": "\"hello\\n\""`
+    col := str_find(line, ":")
+    if col < 0:
+        return ""
+    mut v := str_trim(str_substr(line, col + 1, str_len(line) - col - 1))
+    if str_ends_with(v, ","):
+        v = str_trim(str_substr(v, 0, str_len(v) - 1))
+    if str_len(v) >= 2 && str_starts_with(v, "\"") && str_ends_with(v, "\""):
+        return str_substr(v, 1, str_len(v) - 2)
+    return v
+
+def jl_skip_block(lines: List[Str], start_i: Int) -> Int:
+    # Given line `start_i` ending with `{` or `[`, skip until matching `}` or `]`
+    n := len(lines)
+    mut i := start_i
+    mut depth := 1
+    while i < n && depth > 0:
+        t := str_trim(lines[i])
+        if str_ends_with(t, "{") || str_ends_with(t, "["):
+            depth = depth + 1
+        if str_starts_with(t, "}") || str_starts_with(t, "]"):
+            depth = depth - 1
+        i = i + 1
+    return i
+
+def jl_parse_node(lines: List[Str], start_i: Int, nodes: List[AstNode]) -> (Int, Int):
+    # Parses one `{ ... }` AST node starting at `lines[start_i]` (which is `{` or `{}`)
+    # Returns (node_idx, next_line_idx)
+    n := len(lines)
+    first := str_trim(lines[start_i])
+    if first == "{}" || first == "{},":
+        idx := len(nodes)
+        list_push(nodes, AstNode("", "", "", "", "", "", "", "", false, false, "", "", "", "", "", list_new()))
+        return (idx, start_i + 1)
+
+    my_idx := len(nodes)
+    list_push(nodes, AstNode("", "", "", "", "", "", "", "", false, false, "", "", "", "", "", list_new()))
+
+    mut id_str := ""
+    mut kind := ""
+    mut name := ""
+    mut qual_type := ""
+    mut desug_type := ""
+    mut opcode := ""
+    mut cast_kind := ""
+    mut val_str := ""
+    mut is_postfix := false
+    mut is_implicit := false
+    mut ref_name := ""
+    mut ref_kind := ""
+    mut owned_tag_id := ""
+    mut arg_type := ""
+    mut loc_file := ""
+    mut children := list_new()
+
+    mut i := start_i + 1
+    while i < n:
+        t := str_trim(lines[i])
+        if str_starts_with(t, "}"):
+            i = i + 1
+            break
+        if str_starts_with(t, "\"id\":"):
+            id_str = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"kind\":"):
+            kind = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"name\":"):
+            name = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"opcode\":"):
+            opcode = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"castKind\":"):
+            cast_kind = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"value\":"):
+            val_str = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"targetLabelDeclId\":") || str_starts_with(t, "\"declId\":"):
+            val_str = jl_extract_val(t)
+            i = i + 1
+        elif str_starts_with(t, "\"isPostfix\":"):
+            if jl_extract_val(t) == "true":
+                is_postfix = true
+            i = i + 1
+        elif str_starts_with(t, "\"isImplicit\":") || str_starts_with(t, "\"implicit\":"):
+            if jl_extract_val(t) == "true":
+                is_implicit = true
+            i = i + 1
+        elif t == "\"type\": {":
+            i = i + 1
+            while i < n:
+                lt := str_trim(lines[i])
+                i = i + 1
+                if str_starts_with(lt, "}"):
+                    break
+                if str_starts_with(lt, "\"qualType\":"):
+                    qual_type = jl_extract_val(lt)
+                elif str_starts_with(lt, "\"desugaredQualType\":"):
+                    desug_type = jl_extract_val(lt)
+        elif t == "\"argType\": {":
+            i = i + 1
+            while i < n:
+                lt := str_trim(lines[i])
+                i = i + 1
+                if str_starts_with(lt, "}"):
+                    break
+                if str_starts_with(lt, "\"qualType\":"):
+                    arg_type = jl_extract_val(lt)
+        elif t == "\"loc\": {":
+            i = i + 1
+            mut ldepth := 1
+            mut in_included := false
+            mut in_expansion := false
+            while i < n && ldepth > 0:
+                lt := str_trim(lines[i])
+                i = i + 1
+                if lt == "\"includedFrom\": {":
+                    in_included = true
+                elif lt == "\"expansionLoc\": {":
+                    in_expansion = true
+                if str_ends_with(lt, "{") || str_ends_with(lt, "["):
+                    ldepth = ldepth + 1
+                if str_starts_with(lt, "}") || str_starts_with(lt, "]"):
+                    ldepth = ldepth - 1
+                    in_included = false
+                    if ldepth <= 1:
+                        in_expansion = false
+                elif str_starts_with(lt, "\"file\":") && !in_included:
+                    if in_expansion || str_len(loc_file) == 0:
+                        loc_file = jl_extract_val(lt)
+        elif t == "\"referencedDecl\": {":
+            i = i + 1
+            mut rdepth := 1
+            while i < n && rdepth > 0:
+                lt := str_trim(lines[i])
+                i = i + 1
+                if str_ends_with(lt, "{") || str_ends_with(lt, "["):
+                    rdepth = rdepth + 1
+                if str_starts_with(lt, "}") || str_starts_with(lt, "]"):
+                    rdepth = rdepth - 1
+                elif rdepth == 1:
+                    if str_starts_with(lt, "\"name\":"):
+                        ref_name = jl_extract_val(lt)
+                    elif str_starts_with(lt, "\"kind\":"):
+                        ref_kind = jl_extract_val(lt)
+        elif t == "\"ownedTagDecl\": {":
+            i = i + 1
+            mut odepth := 1
+            while i < n && odepth > 0:
+                lt := str_trim(lines[i])
+                i = i + 1
+                if str_ends_with(lt, "{") || str_ends_with(lt, "["):
+                    odepth = odepth + 1
+                if str_starts_with(lt, "}") || str_starts_with(lt, "]"):
+                    odepth = odepth - 1
+                elif odepth == 1 && str_starts_with(lt, "\"id\":"):
+                    owned_tag_id = jl_extract_val(lt)
+        elif t == "\"inner\": [":
+            i = i + 1
+            while i < n:
+                lt := str_trim(lines[i])
+                if str_starts_with(lt, "]"):
+                    i = i + 1
+                    break
+                if str_starts_with(lt, "{"):
+                    sub := jl_parse_node(lines, i, nodes)
+                    list_push(children, sub.0)
+                    i = sub.1
+                else:
+                    i = i + 1
+        elif str_ends_with(t, "{") || str_ends_with(t, "["):
+            i = jl_skip_block(lines, i + 1)
+        else:
+            i = i + 1
+
+    nodes[my_idx] = AstNode(id_str, kind, name, qual_type, desug_type, opcode, cast_kind, val_str, is_postfix, is_implicit, ref_name, ref_kind, owned_tag_id, arg_type, loc_file, children)
+    return (my_idx, i)
+
+def jl_find_top_loc(full_json: Str, pat: Str) -> Int:
+    mut off := 0
+    flen := str_len(full_json)
+    mut guard := 0
+    while off < flen && guard < 16:
+        guard = guard + 1
+        rem := str_substr(full_json, off, flen - off)
+        r := str_find(rem, pat)
+        if r < 0:
+            return -1
+        abs_p := off + r
+        mut ls := abs_p - 256
+        if ls < 0:
+            ls = 0
+        seg := str_substr(full_json, ls, abs_p - ls)
+        # Verify this match is on an 8-space top-level `loc.file` line (not 14-space `range.begin.file`)
+        mut last_nl := -1
+        mut so := 0
+        slen := str_len(seg)
+        while so < slen:
+            nr := str_find(str_substr(seg, so, slen - so), "\n")
+            if nr < 0:
+                break
+            last_nl = so + nr
+            so = last_nl + 1
+        line_prefix := str_substr(seg, last_nl + 1, slen - last_nl - 1)
+        if str_starts_with(line_prefix, "        \"file\": \""):
+            return abs_p
+        off = abs_p + str_len(pat)
+    return -1
+
+def jp_parse_clang_tu(full_json: Str, stem: Str) -> (List[AstNode], List[Int]):
+    # Fast O(N) jump past SDK/system headers using `str_find` on top-level 8-space `loc.file`.
+    h_pat := str_concat("/", str_concat(stem, ".h\","))
+    c_pat := str_concat("/", str_concat(stem, ".c\","))
+    mut jump := jl_find_top_loc(full_json, h_pat)
+    if jump < 0:
+        jump = jl_find_top_loc(full_json, c_pat)
+    mut start_pos := 0
+    if jump > 0:
+        mut win_start := jump - 512
+        if win_start < 0:
+            win_start = 0
+        win := str_substr(full_json, win_start, jump - win_start)
+        # Find the LAST `\n    {` in the 512-byte window before `jump`
+        mut last_rel := -1
+        mut search_off := 0
+        wlen := str_len(win)
+        while search_off < wlen:
+            rem := str_substr(win, search_off, wlen - search_off)
+            r := str_find(rem, "\n    {")
+            if r < 0:
+                break
+            last_rel = search_off + r
+            search_off = last_rel + 6
+        if last_rel >= 0:
+            start_pos = win_start + last_rel + 1
+        else:
+            start_pos = win_start
+    else:
+        inner_pos := str_find(full_json, "\"inner\": [")
+        if inner_pos >= 0:
+            start_pos = inner_pos + 10
+
+    slice := str_substr(full_json, start_pos, str_len(full_json) - start_pos)
+    lines := str_lines(slice)
+    mut nodes := list_new()
+    mut top_ids := list_new()
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        raw_l := lines[i]
+        if raw_l == "  ]" || raw_l == "}":
+            break
+        if raw_l == "    {":
+            res := jl_parse_node(lines, i, nodes)
+            list_push(top_ids, res.0)
+            i = res.1
+        else:
+            i = i + 1
+    return (nodes, top_ids)

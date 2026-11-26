@@ -14,6 +14,8 @@
 
 import native_types
 import translator
+import c_preproc
+import c_runtime_shims
 
 def cf_strip_inline_block_comments(raw: Str) -> Str:
     mut s := raw
@@ -49,13 +51,26 @@ def cf_unwrap_export_macros(raw: Str) -> Str:
         s = str_trim(str_substr(s, 7, str_len(s) - 7))
     return s
 
+def cf_escape_fn_name(name: Str) -> Str:
+    if name == "print" || name == "abs" || name == "min" || name == "max" || name == "floor" || name == "ceil" || name == "pow" || name == "sqrt" || name == "len" || name == "exit" || name == "sleep":
+        return str_concat("c_", name)
+    return tr_escape_ident(name)
+
 def cf_clean_c_type_for_lpp(raw: Str, defined_structs: Map[Str, Int], bool_types: Map[Str, Int]) -> Str:
     mut s := nt_normalize_ws(raw)
     if str_len(s) == 0 || s == "void":
         return "Void"
-    if str_contains(s, "**") || str_contains(s, "* *"):
-        return ""
     if str_contains(s, "(*"):
+        return ""
+    # Double pointers `char**` / `unsigned char**` -> `ByteCursor`, `const char**` -> `StrRef`
+    if str_contains(s, "**") || str_contains(s, "* *"):
+        mut base2 := str_replace(s, "*", " ")
+        base2 = nt_strip_qualifiers(base2)
+        low2 := str_to_lower(base2)
+        if low2 == "char" || low2 == "unsigned char" || low2 == "signed char":
+            if str_contains(s, "const "):
+                return "StrRef"
+            return "ByteCursor"
         return ""
     is_ptr := str_contains(s, "*")
     mut base := str_replace(s, "*", " ")
@@ -64,6 +79,8 @@ def cf_clean_c_type_for_lpp(raw: Str, defined_structs: Map[Str, Int], bool_types
     if is_ptr:
         if low == "char" || low == "unsigned char" || low == "signed char":
             return "Str"
+        if low == "bool" || low == "_bool":
+            return "BoolRef"
         if map_has(defined_structs, base):
             return base
         # Opaque / external C struct pointer (e.g. VkAllocationCallbacks*, void*) -> Int handle
@@ -76,7 +93,7 @@ def cf_clean_c_type_for_lpp(raw: Str, defined_structs: Map[Str, Int], bool_types
         return "Void"
     if map_has(defined_structs, base):
         return base
-    if low == "int" || low == "unsigned" || low == "unsigned int" || low == "signed" || low == "signed int" || low == "long" || low == "unsigned long" || low == "long long" || low == "unsigned long long" || low == "short" || low == "unsigned short" || low == "char" || low == "unsigned char" || low == "signed char" || low == "size_t" || low == "ssize_t" || low == "ptrdiff_t" || low == "int8_t" || low == "uint8_t" || low == "int16_t" || low == "uint16_t" || low == "int32_t" || low == "uint32_t" || low == "int64_t" || low == "uint64_t":
+    if low == "int" || low == "unsigned" || low == "unsigned int" || low == "signed" || low == "signed int" || low == "long" || low == "unsigned long" || low == "long long" || low == "unsigned long long" || low == "short" || low == "unsigned short" || low == "char" || low == "unsigned char" || low == "signed char" || low == "size_t" || low == "ssize_t" || low == "ptrdiff_t" || low == "int8_t" || low == "uint8_t" || low == "int16_t" || low == "uint16_t" || low == "int32_t" || low == "uint32_t" || low == "int64_t" || low == "uint64_t" || str_starts_with(base, "Vk") || str_ends_with(base, "_t"):
         return "Int"
     return ""
 
@@ -152,6 +169,99 @@ def cf_strip_ifdefs(body_raw: Str) -> Str:
         i = i + 1
     return str_join(kept, "\n")
 
+def cf_rewrite_sizeof_str(src: Str) -> Str:
+    # General `sizeof("lit")` -> `(str_len("lit") + 1)`
+    if !str_contains(src, "sizeof(\""):
+        return src
+    mut e := src
+    mut guard := 0
+    while str_contains(e, "sizeof(\"") && guard < 16:
+        guard = guard + 1
+        pos := str_find(e, "sizeof(\"")
+        mut k := pos + 8
+        en := str_len(e)
+        mut end_q := -1
+        while k < en:
+            ch := str_substr(e, k, 1)
+            if ch == "\\" && k + 1 < en:
+                k = k + 2
+                continue
+            if ch == "\"":
+                end_q = k
+                break
+            k = k + 1
+        if end_q < 0 || end_q + 1 >= en || str_substr(e, end_q + 1, 1) != ")":
+            break
+        lit := str_substr(e, pos + 7, end_q - pos - 6)
+        before := str_substr(e, 0, pos)
+        after := str_substr(e, end_q + 2, en - end_q - 2)
+        e = str_concat(before, str_concat("(str_len(", str_concat(lit, str_concat(") + 1)", after))))
+    return e
+
+def cf_convert_char_literals(src: Str) -> Str:
+    # General C char literal -> ASCII Int converter (`'a'` -> `97`, `'\n'` -> `10`, etc.)
+    n := str_len(src)
+    if !str_contains(src, "'"):
+        return src
+    mut out := list_new()
+    mut i := 0
+    mut seg := 0
+    mut in_dq := false
+    while i < n:
+        ch := str_substr(src, i, 1)
+        if in_dq:
+            if ch == "\\" && i + 1 < n:
+                i = i + 2
+                continue
+            if ch == "\"":
+                in_dq = false
+            i = i + 1
+            continue
+        if ch == "\"":
+            in_dq = true
+            i = i + 1
+            continue
+        if ch == "'" && i + 2 < n:
+            nxt := str_substr(src, i + 1, 1)
+            if nxt == "\\" && i + 3 < n && str_substr(src, i + 3, 1) == "'":
+                esc := str_substr(src, i + 2, 1)
+                mut code := ord(esc)
+                if esc == "0":
+                    code = 0
+                elif esc == "n":
+                    code = 10
+                elif esc == "r":
+                    code = 13
+                elif esc == "t":
+                    code = 9
+                elif esc == "b":
+                    code = 8
+                elif esc == "f":
+                    code = 12
+                elif esc == "\\":
+                    code = 92
+                elif esc == "'":
+                    code = 39
+                elif esc == "\"":
+                    code = 34
+                if i > seg:
+                    list_push(out, str_substr(src, seg, i - seg))
+                list_push(out, int_to_str(code))
+                i = i + 4
+                seg = i
+                continue
+            if str_substr(src, i + 2, 1) == "'":
+                if i > seg:
+                    list_push(out, str_substr(src, seg, i - seg))
+                list_push(out, int_to_str(ord(nxt)))
+                i = i + 3
+                seg = i
+                continue
+        i = i + 1
+    if seg < n:
+        list_push(out, str_substr(src, seg, n - seg))
+    return str_join(out, "")
+
 def cf_translate_expr(raw: Str) -> Str:
     mut e := str_trim(raw)
     e = cf_replace_ident(e, "NULL", "0")
@@ -174,21 +284,18 @@ def cf_translate_expr(raw: Str) -> Str:
     e = str_replace(e, "(unsigned char)", "")
     e = cf_replace_ident(e, "DBL_EPSILON", "0.0000000000000002220446049250313")
     e = cf_replace_ident(e, "NAN", "(0.0 / 0.0)")
-    e = str_replace(e, "fabs(", "c2lpp_fabs(")
-    e = str_replace(e, "strlen(", "str_len(")
-    # Char literals -> ASCII integer values
-    e = str_replace(e, "'0'", "48")
-    e = str_replace(e, "'9'", "57")
-    e = str_replace(e, "'A'", "65")
-    e = str_replace(e, "'F'", "70")
-    e = str_replace(e, "'a'", "97")
-    e = str_replace(e, "'f'", "102")
-    e = str_replace(e, "'.'", "46")
-    e = str_replace(e, "'\\0'", "0")
-    e = str_replace(e, "' '", "32")
-    e = str_replace(e, "'\\t'", "9")
-    e = str_replace(e, "'\\n'", "10")
-    e = str_replace(e, "'\\r'", "13")
+    e = cf_replace_ident(e, "fabs", "c2lpp_fabs")
+    e = cf_replace_ident(e, "isnan", "c2lpp_isnan")
+    e = cf_replace_ident(e, "isinf", "c2lpp_isinf")
+    e = cf_replace_ident(e, "tolower", "c2lpp_tolower")
+    e = cf_replace_ident(e, "toupper", "c2lpp_toupper")
+    e = cf_replace_ident(e, "isdigit", "c2lpp_isdigit")
+    e = cf_replace_ident(e, "isspace", "c2lpp_isspace")
+    e = cf_replace_ident(e, "getenv", "env_get")
+    e = cf_replace_ident(e, "strlen", "str_len")
+    e = cf_convert_char_literals(e)
+    e = cf_rewrite_sizeof_str(e)
+    e = tr_rewrite_sizeof(e)
     # Native L++ struct allocation for cJSON_New_Item
     e = str_replace(e, "loader_calloc(pAllocator, sizeof(cJSON), VK_SYSTEM_ALLOCATION_SCOPE_COMMAND)", "cJSON(cJSON_null(), cJSON_null(), cJSON_null(), 0, \"\", 0, 0.0, \"\", pAllocator, false)")
     # Yoda null comparisons `0 != x` / `0 == x` -> `x != 0` / `x == 0`
@@ -199,17 +306,17 @@ def cf_translate_expr(raw: Str) -> Str:
     # Bitwise flag negation `!(x & FLAG)` -> `((x & FLAG) == 0)`
     e = str_replace(e, "!(item.c_type & cJSON_IsReference)", "((item.c_type & cJSON_IsReference) == 0)")
     e = str_replace(e, "!(item.c_type & cJSON_StringIsConst)", "((item.c_type & cJSON_StringIsConst) == 0)")
-    # cJSON parse_buffer macros -> pure L++ expressions
-    e = str_replace(e, "cannot_access_at_index(buffer, 0)", "((buffer == 0) || (buffer.offset >= buffer.length))")
-    e = str_replace(e, "can_access_at_index(buffer, 0)", "((buffer != 0) && (buffer.offset < buffer.length))")
-    e = str_replace(e, "can_access_at_index(buffer, 4)", "((buffer != 0) && ((buffer.offset + 4) < buffer.length))")
-    e = str_replace(e, "buffer_at_offset(buffer)[0]", "c2lpp_byte_at(buffer.content, buffer.offset)")
-    e = str_replace(e, "strncmp(buffer_at_offset(buffer), \"\\xEF\\xBB\\xBF\", 3) == 0", "((c2lpp_byte_at(buffer.content, buffer.offset) == 239) && (c2lpp_byte_at(buffer.content, buffer.offset + 1) == 187) && (c2lpp_byte_at(buffer.content, buffer.offset + 2) == 191))")
+    # Expanded buffer_at_offset `((b).content + (b).offset)[0]` -> `c2lpp_byte_at((b).content, (b).offset)`
+    e = str_replace(e, "((buffer).content + (buffer).offset)[0]", "c2lpp_byte_at(buffer.content, buffer.offset)")
+    e = str_replace(e, "((input_buffer).content + (input_buffer).offset)[0]", "c2lpp_byte_at(input_buffer.content, input_buffer.offset)")
+    e = str_replace(e, "strncmp(((buffer).content + (buffer).offset), \"\\xEF\\xBB\\xBF\", 3) == 0", "((c2lpp_byte_at(buffer.content, buffer.offset) == 239) && (c2lpp_byte_at(buffer.content, buffer.offset + 1) == 187) && (c2lpp_byte_at(buffer.content, buffer.offset + 2) == 191))")
     # String byte indexing `input[i]` -> `c2lpp_byte_at(input, i)`
     e = str_replace(e, "input[i]", "c2lpp_byte_at(input, i)")
     # Str null comparisons -> empty string `""` in pure L++
     e = str_replace(e, "(name == 0)", "(name == \"\")")
     e = str_replace(e, "(name != 0)", "(name != \"\")")
+    e = str_replace(e, "name == 0", "name == \"\"")
+    e = str_replace(e, "name != 0", "name != \"\"")
     e = str_replace(e, ".string == 0", ".string == \"\"")
     e = str_replace(e, ".string != 0", ".string != \"\"")
     e = str_replace(e, ".valuestring == 0", ".valuestring == \"\"")
@@ -219,7 +326,20 @@ def cf_translate_expr(raw: Str) -> Str:
     e = str_replace(e, ".buffer == 0", ".buffer == \"\"")
     e = str_replace(e, ".buffer != 0", ".buffer != \"\"")
     e = tr_rewrite_sizeof(e)
-    # Translate `strcmp(a, b) == 0` -> `(a == b)` and `strcmp(a, b) != 0` -> `(a != b)`
+    # Translate `!strcmp(a, b)` -> `(a == b)`, `strcmp(a, b) == 0` -> `(a == b)`, `strcmp(a, b) != 0` -> `(a != b)`
+    if str_contains(e, "!strcmp("):
+        idx := str_find(e, "!strcmp(")
+        before := str_substr(e, 0, idx)
+        rest := str_substr(e, idx + 8, str_len(e) - idx - 8)
+        close := str_find(rest, ")")
+        if close > 0:
+            args := str_substr(rest, 0, close)
+            after := str_substr(rest, close + 1, str_len(rest) - close - 1)
+            comma := str_find(args, ",")
+            if comma > 0:
+                a1 := str_trim(str_substr(args, 0, comma))
+                a2 := str_trim(str_substr(args, comma + 1, str_len(args) - comma - 1))
+                e = str_concat(before, str_concat("(", str_concat(a1, str_concat(" == ", str_concat(a2, str_concat(")", after))))))
     if str_contains(e, "strcmp("):
         idx := str_find(e, "strcmp(")
         before := str_substr(e, 0, idx)
@@ -240,17 +360,116 @@ def cf_translate_expr(raw: Str) -> Str:
                     e = str_concat(before, str_concat("(", str_concat(a1, str_concat(" != ", str_concat(a2, str_concat(")", tail))))))
     return str_trim(e)
 
-def cf_body_has_unsupported(body_raw: Str) -> Bool:
+def cf_rewrite_cursor_ops(expr: Str, cur_vars: List[Str]) -> Str:
+    mut e := expr
+    mut i := 0
+    n := len(cur_vars)
+    while i < n:
+        v := cur_vars[i]
+        # `(*v)[idx]` -> `c2lpp_cur_get(v, idx)`
+        needle := str_concat("(*", str_concat(v, ")["))
+        mut guard := 0
+        while str_contains(e, needle) && guard < 16:
+            guard = guard + 1
+            pos := str_find(e, needle)
+            open_b := pos + str_len(needle) - 1
+            close_b := str_find(str_substr(e, open_b, str_len(e) - open_b), "]")
+            if close_b <= 0:
+                break
+            idx_e := str_substr(e, open_b + 1, close_b - 1)
+            before := str_substr(e, 0, pos)
+            after := str_substr(e, open_b + close_b + 1, str_len(e) - open_b - close_b - 1)
+            e = str_concat(before, str_concat("c2lpp_cur_get(", str_concat(v, str_concat(", ", str_concat(idx_e, str_concat(")", after))))))
+        # `++(*v)` / `(*v)++` -> `v.pos = v.pos + 1`
+        e = str_replace(e, str_concat("++(*", str_concat(v, ")")), str_concat(v, str_concat(".pos = ", str_concat(v, ".pos + 1"))))
+        e = str_replace(e, str_concat("(*", str_concat(v, ")++")), str_concat(v, str_concat(".pos = ", str_concat(v, ".pos + 1"))))
+        i = i + 1
+    return e
+
+def cf_emit_cursor_stmt(line: Str, level: Int, cur_vars: List[Str], str_vars: List[Str]) -> Str:
+    mut s := str_trim(line)
+    if str_ends_with(s, ";"):
+        s = str_trim(str_substr(s, 0, str_len(s) - 1))
+    # Strip leading `(void)` cast on step statements like `(void)++(*input)`
+    if str_starts_with(s, "(void)"):
+        s = str_trim(str_substr(s, 6, str_len(s) - 6))
+    mut i := 0
+    n := len(cur_vars)
+    while i < n:
+        v := cur_vars[i]
+        # `*v += expr` -> `v.pos = v.pos + (expr)`
+        p_inc := str_concat("*", str_concat(v, " += "))
+        if str_starts_with(s, p_inc):
+            rhs := cf_rewrite_cursor_ops(cf_translate_expr(str_substr(s, str_len(p_inc), str_len(s) - str_len(p_inc))), cur_vars)
+            return str_concat(tr_indent(level), str_concat(v, str_concat(".pos = ", str_concat(v, str_concat(".pos + (", str_concat(rhs, ")\n"))))))
+        # `(*v)[idx] = rhs` -> `c2lpp_cur_set(v, idx, rhs)`
+        p_idx := str_concat("(*", str_concat(v, ")["))
+        if str_starts_with(s, p_idx):
+            eq := str_find(s, " = ")
+            if eq > str_len(p_idx):
+                lhs := str_trim(str_substr(s, 0, eq))
+                rhs := cf_rewrite_cursor_ops(cf_rewrite_str_ops(cf_translate_expr(str_substr(s, eq + 3, str_len(s) - eq - 3)), str_vars), cur_vars)
+                if str_ends_with(lhs, "]"):
+                    idx_e := str_substr(lhs, str_len(p_idx), str_len(lhs) - str_len(p_idx) - 1)
+                    return str_concat(tr_indent(level), str_concat("c2lpp_cur_set(", str_concat(v, str_concat(", ", str_concat(idx_e, str_concat(", ", str_concat(rhs, ")\n")))))))
+        # `++(*v)` / `(*v)++`
+        if s == str_concat("++(*", str_concat(v, ")")) || s == str_concat("(*", str_concat(v, ")++")):
+            return str_concat(tr_indent(level), str_concat(v, str_concat(".pos = ", str_concat(v, ".pos + 1\n"))))
+        i = i + 1
+    return ""
+
+def cf_body_has_unsupported(body_raw: Str, str_params: List[Str], cur_params: List[Str]) -> Bool:
     clean := cf_strip_ifdefs(body_raw)
-    if str_contains(clean, "goto ") || str_contains(clean, "va_list") || str_contains(clean, "setjmp") || str_contains(clean, "sscanf") || str_contains(clean, "sprintf") || str_contains(clean, "strtod") || str_contains(clean, "memcpy") || str_contains(clean, "memcmp") || str_contains(clean, "memset") || str_contains(clean, "strcpy") || str_contains(clean, "INFINITY") || str_contains(clean, "static_strlen") || str_contains(clean, "loader_realloc") || str_contains(clean, "global_error") || str_contains(clean, "tolower") || str_contains(clean, "floor") || str_contains(clean, "pow(") || str_contains(clean, "isnan") || str_contains(clean, "isinf") || str_contains(clean, "INT_MAX") || str_contains(clean, "INT_MIN") || str_contains(clean, "ensure(") || str_contains(clean, "print_string_ptr(") || str_contains(clean, "loader_cJSON_ParseWithOpts(") || str_contains(clean, "loader_cJSON_ParseWithLengthOpts(") || str_contains(clean, "print(") || str_contains(clean, "print_value(") || str_contains(clean, "parse_value(") || str_contains(clean, "parse_string(") || str_contains(clean, "parse_number(") || str_contains(clean, "*output_pointer") || str_contains(clean, "(*input)"):
+    if str_contains(clean, "goto ") || str_contains(clean, "va_list") || str_contains(clean, "setjmp") || str_contains(clean, "sscanf") || str_contains(clean, "sprintf") || str_contains(clean, "strtod") || str_contains(clean, "memcpy") || str_contains(clean, "memcmp") || str_contains(clean, "memset") || str_contains(clean, "strcpy") || str_contains(clean, "INFINITY") || str_contains(clean, "loader_realloc") || str_contains(clean, "global_error") || str_contains(clean, "tolower") || str_contains(clean, "floor") || str_contains(clean, "pow(") || str_contains(clean, "isnan") || str_contains(clean, "isinf") || str_contains(clean, "INT_MAX") || str_contains(clean, "INT_MIN") || str_contains(clean, "ensure(") || str_contains(clean, "print_string_ptr(") || str_contains(clean, "loader_cJSON_ParseWithOpts(") || str_contains(clean, "loader_cJSON_ParseWithLengthOpts(") || str_contains(clean, "print(") || str_contains(clean, "print_value(") || str_contains(clean, "parse_value(") || str_contains(clean, "parse_string(") || str_contains(clean, "parse_number(") || str_contains(clean, "*output_pointer"):
         return true
     if str_contains(clean, "["):
-        stripped_idx := str_replace(str_replace(clean, "input[i]", ""), "buffer_at_offset(buffer)[0]", "")
+        mut stripped_idx := str_replace(clean, "((buffer)->content + (buffer)->offset)[0]", "")
+        stripped_idx = str_replace(stripped_idx, "((input_buffer)->content + (input_buffer)->offset)[0]", "")
+        stripped_idx = str_replace(stripped_idx, "buffer_at_offset(buffer)[0]", "")
+        mut si := 0
+        while si < len(str_params):
+            sv := str_params[si]
+            stripped_idx = str_replace(stripped_idx, str_concat(sv, "["), "(")
+            si = si + 1
+        mut ci := 0
+        while ci < len(cur_params):
+            cv := cur_params[ci]
+            stripped_idx = str_replace(stripped_idx, str_concat("(*", str_concat(cv, ")[")), "(")
+            ci = ci + 1
         if str_contains(stripped_idx, "["):
             return true
     if str_contains(clean, "&") && !str_contains(clean, " & ") && !str_contains(clean, "&&"):
         return true
     return false
+
+def cf_rewrite_str_ops(expr: Str, str_var_names: List[Str]) -> Str:
+    mut e := expr
+    mut i := 0
+    n := len(str_var_names)
+    while i < n:
+        v := str_var_names[i]
+        # `!s` -> `(s == "")`
+        e = str_replace(e, str_concat("!", v), str_concat("(", str_concat(v, " == \"\")")))
+        e = str_replace(e, str_concat(v, " == 0"), str_concat(v, " == \"\""))
+        e = str_replace(e, str_concat(v, " != 0"), str_concat(v, " != \"\""))
+        # `v[idx]` -> `c2lpp_byte_at(v, idx)`
+        needle := str_concat(v, "[")
+        mut guard := 0
+        while str_contains(e, needle) && guard < 16:
+            guard = guard + 1
+            pos := str_find(e, needle)
+            if pos > 0 && cf_is_ident_char(str_substr(e, pos - 1, 1)):
+                break
+            open_b := pos + str_len(v)
+            close_b := str_find(str_substr(e, open_b, str_len(e) - open_b), "]")
+            if close_b <= 0:
+                break
+            idx_e := str_substr(e, open_b + 1, close_b - 1)
+            before := str_substr(e, 0, pos)
+            after := str_substr(e, open_b + close_b + 1, str_len(e) - open_b - close_b - 1)
+            e = str_concat(before, str_concat("c2lpp_byte_at(", str_concat(v, str_concat(", ", str_concat(idx_e, str_concat(")", after))))))
+        i = i + 1
+    return e
 
 def cf_rewrite_struct_nulls(expr: Str, struct_var_names: List[Str]) -> Str:
     mut e := expr
@@ -274,10 +493,12 @@ def cf_rewrite_struct_nulls(expr: Str, struct_var_names: List[Str]) -> Str:
         i = i + 1
     return e
 
-def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: Map[Str, Int], ret_lpp_ty: Str, init_struct_vars: List[Str]) -> Str:
+def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: Map[Str, Int], ret_lpp_ty: Str, init_struct_vars: List[Str], init_str_vars: List[Str], init_cur_vars: List[Str]) -> Str:
     lines := str_lines(body_raw)
     mut out_list := list_new()
     mut struct_vars := init_struct_vars
+    mut str_vars := init_str_vars
+    mut cur_vars := init_cur_vars
     mut level := 1
     mut in_ifdef_skip := false
     mut switch_var := ""
@@ -287,26 +508,11 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
     mut pending_cases := list_new()
     mut for_steps := ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
 
-    mut in_body_comment := false
     mut idx := 0
     n := len(lines)
     while idx < n:
-        mut raw_l := str_trim(lines[idx])
+        mut line := str_trim(lines[idx])
         idx = idx + 1
-        if in_body_comment:
-            if str_contains(raw_l, "*/"):
-                ep := str_find(raw_l, "*/")
-                raw_l = str_trim(str_substr(raw_l, ep + 2, str_len(raw_l) - ep - 2))
-                in_body_comment = false
-            else:
-                continue
-        if str_contains(raw_l, "/*") && !str_contains(raw_l, "*/"):
-            sp := str_find(raw_l, "/*")
-            raw_l = str_trim(str_substr(raw_l, 0, sp))
-            in_body_comment = true
-            if str_len(raw_l) == 0:
-                continue
-        mut line := str_trim(tr_strip_line_comment(cf_strip_inline_block_comments(raw_l)))
         if str_len(line) == 0:
             continue
 
@@ -326,7 +532,7 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
         # Join multi-line `if (` / `while (` conditions
         if (str_starts_with(line, "if ") || str_starts_with(line, "if(") || str_starts_with(line, "while ") || str_starts_with(line, "while(")) && !str_contains(line, "{") && !str_ends_with(line, ";"):
             while idx < n && !str_contains(line, "{") && !str_ends_with(line, ";"):
-                nxt := str_trim(tr_strip_line_comment(cf_strip_inline_block_comments(lines[idx])))
+                nxt := str_trim(lines[idx])
                 idx = idx + 1
                 line = str_concat(line, str_concat(" ", nxt))
 
@@ -342,7 +548,24 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
             if level > 1:
                 step := for_steps[level]
                 if str_len(step) > 0:
-                    list_push(out_list, tr_emit_simple_stmt(step, level))
+                    # Support comma-separated `for` step expressions (e.g. `(void)++(*input), ++(*output)`)
+                    mut sstart := 0
+                    mut si := 0
+                    sn := str_len(step)
+                    while si <= sn:
+                        mut sch := ","
+                        if si < sn:
+                            sch = str_substr(step, si, 1)
+                        if sch == ",":
+                            piece := str_trim(str_substr(step, sstart, si - sstart))
+                            if str_len(piece) > 0:
+                                cur_s := cf_emit_cursor_stmt(piece, level, cur_vars, str_vars)
+                                if str_len(cur_s) > 0:
+                                    list_push(out_list, cur_s)
+                                else:
+                                    list_push(out_list, tr_emit_simple_stmt(piece, level))
+                            sstart = si + 1
+                        si = si + 1
                     for_steps[level] = ""
                 level = level - 1
             continue
@@ -446,7 +669,7 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                         break
                 k = k + 1
             if cs >= 0 && ce > cs:
-                cond := cf_rewrite_struct_nulls(cf_translate_expr(str_substr(line, cs + 1, ce - cs - 1)), struct_vars)
+                cond := cf_rewrite_cursor_ops(cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(str_substr(line, cs + 1, ce - cs - 1)), struct_vars), str_vars), cur_vars)
                 list_push(out_list, str_concat(tr_indent(level), str_concat("elif ", str_concat(cond, ":\n"))))
                 level = level + 1
             continue
@@ -475,7 +698,7 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                         break
                 k = k + 1
             if cs >= 0 && ce > cs:
-                cond := cf_rewrite_struct_nulls(cf_translate_expr(str_substr(line, cs + 1, ce - cs - 1)), struct_vars)
+                cond := cf_rewrite_cursor_ops(cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(str_substr(line, cs + 1, ce - cs - 1)), struct_vars), str_vars), cur_vars)
                 after_if := str_trim(str_substr(line, ce + 1, str_len(line) - ce - 1))
                 list_push(out_list, str_concat(tr_indent(level), str_concat("if ", str_concat(cond, ":\n"))))
                 if after_if == "{" || str_len(after_if) == 0:
@@ -489,8 +712,14 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                         if str_len(rexpr) == 0:
                             list_push(out_list, str_concat(tr_indent(level + 1), "return\n"))
                         else:
-                            mut r_tr := cf_rewrite_struct_nulls(cf_translate_expr(rexpr), struct_vars)
-                            if map_has(defined_structs, ret_lpp_ty) && r_tr == "0":
+                            mut r_tr := cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(rexpr), struct_vars), str_vars)
+                            if ret_lpp_ty == "Bool" && r_tr == "0":
+                                r_tr = "false"
+                            elif ret_lpp_ty == "Bool" && r_tr == "1":
+                                r_tr = "true"
+                            elif ret_lpp_ty == "Str" && r_tr == "0":
+                                r_tr = "\"\""
+                            elif map_has(defined_structs, ret_lpp_ty) && r_tr == "0":
                                 r_tr = str_concat(ret_lpp_ty, "_null()")
                             list_push(out_list, str_concat(tr_indent(level + 1), str_concat("return ", str_concat(r_tr, "\n"))))
                     else:
@@ -513,7 +742,7 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                         break
                 k = k + 1
             if cs >= 0 && ce > cs:
-                cond := cf_rewrite_struct_nulls(cf_translate_expr(str_substr(line, cs + 1, ce - cs - 1)), struct_vars)
+                cond := cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(str_substr(line, cs + 1, ce - cs - 1)), struct_vars), str_vars)
                 list_push(out_list, str_concat(tr_indent(level), str_concat("while ", str_concat(cond, ":\n"))))
                 level = level + 1
             continue
@@ -547,7 +776,7 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                             list_push(out_list, tr_emit_simple_stmt(init_p, level))
                         mut cond_lpp := "true"
                         if str_len(cond_p) > 0:
-                            cond_lpp = cf_rewrite_struct_nulls(cf_translate_expr(cond_p), struct_vars)
+                            cond_lpp = cf_rewrite_cursor_ops(cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(cond_p), struct_vars), str_vars), cur_vars)
                         list_push(out_list, str_concat(tr_indent(level), str_concat("while ", str_concat(cond_lpp, ":\n"))))
                         level = level + 1
                         if level < 16:
@@ -592,13 +821,55 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                 list_push(out_list, str_concat(tr_indent(level), str_concat("return ", str_concat(translated_ret, "\n"))))
             continue
 
-        # Typed local declaration `cJSON* current_child = NULL;` -> `mut current_child: cJSON = 0`
+        # Check cursor statements (`*v += n;`, `(*v)[k] = rhs;`, `++(*v);`)
+        if len(cur_vars) > 0:
+            cur_stmt := cf_emit_cursor_stmt(line, level, cur_vars, str_vars)
+            if str_len(cur_stmt) > 0:
+                list_push(out_list, cur_stmt)
+                continue
+
+        # Typed local declaration `cJSON* current_child = NULL;` or uninitialized `char* out;`
         if str_ends_with(line, ";"):
             no_semi := str_trim(str_substr(line, 0, str_len(line) - 1))
+            # Check `str_var += n` -> `str_var = c2lpp_str_advance(str_var, n)`
+            peq := str_find(no_semi, "+=")
+            if peq > 0:
+                plhs := str_trim(str_substr(no_semi, 0, peq))
+                prhs := cf_rewrite_str_ops(cf_translate_expr(str_substr(no_semi, peq + 2, str_len(no_semi) - peq - 2)), str_vars)
+                mut is_sv := false
+                mut si := 0
+                while si < len(str_vars):
+                    if str_vars[si] == plhs:
+                        is_sv = true
+                        break
+                    si = si + 1
+                if is_sv:
+                    list_push(out_list, str_concat(tr_indent(level), str_concat(plhs, str_concat(" = c2lpp_str_advance(", str_concat(plhs, str_concat(", ", str_concat(prhs, ")\n")))))))
+                    continue
             eq := str_find(no_semi, "=")
+            # Uninitialized local declaration `char* out;` / `size_t buffer_length;` / `error local_error;`
+            if eq < 0 && !str_contains(no_semi, "(") && !str_contains(no_semi, "++") && !str_contains(no_semi, "--") && (str_contains(no_semi, " ") || str_contains(no_semi, "*")):
+                upair := cf_split_c_param(no_semi)
+                if str_len(upair.0) > 0 && str_len(upair.1) > 0:
+                    ulty := cf_clean_c_type_for_lpp(upair.0, defined_structs, bool_types)
+                    ulname := tr_escape_ident(upair.1)
+                    if str_len(ulty) > 0 && ulty != "Void":
+                        mut udef := "0"
+                        if ulty == "Str":
+                            list_push(str_vars, str_concat(ulname, ""))
+                            udef = "\"\""
+                        elif ulty == "Float":
+                            udef = "0.0"
+                        elif ulty == "Bool":
+                            udef = "false"
+                        elif map_has(defined_structs, ulty):
+                            list_push(struct_vars, str_concat(ulname, ""))
+                            udef = str_concat(ulty, "_null()")
+                        list_push(out_list, str_concat(tr_indent(level), str_concat("mut ", str_concat(ulname, str_concat(": ", str_concat(ulty, str_concat(" = ", str_concat(udef, "\n"))))))))
+                        continue
             if eq > 0 && !str_contains(no_semi, "==") && !str_contains(no_semi, "!=") && !str_contains(no_semi, "<=") && !str_contains(no_semi, ">=") && !str_contains(no_semi, "+=") && !str_contains(no_semi, "-=") && !str_contains(no_semi, "*=") && !str_contains(no_semi, "/="):
                 lhs := str_trim(str_substr(no_semi, 0, eq))
-                rhs := cf_translate_expr(str_substr(no_semi, eq + 1, str_len(no_semi) - eq - 1))
+                rhs := cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(str_substr(no_semi, eq + 1, str_len(no_semi) - eq - 1)), struct_vars), str_vars)
                 if str_contains(lhs, " ") || str_contains(lhs, "*"):
                     pair := cf_split_c_param(lhs)
                     if str_len(pair.0) > 0 && str_len(pair.1) > 0:
@@ -616,15 +887,23 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                                 list_push(out_list, str_concat(tr_indent(level + 1), str_concat(lname, str_concat(" = ", str_concat(ttval, "\n")))))
                                 continue
                             mut r := rhs
+                            mut clear_null := false
                             if map_has(defined_structs, lty):
                                 list_push(struct_vars, str_concat(lname, ""))
                                 if r == "0":
                                     r = str_concat(lty, "_null()")
-                            elif lty == "Str" && r == "0":
-                                r = "\"\""
+                                elif str_starts_with(r, "{"):
+                                    r = str_concat(lty, "_null()")
+                                    clear_null = true
+                            elif lty == "Str":
+                                list_push(str_vars, str_concat(lname, ""))
+                                if r == "0":
+                                    r = "\"\""
                             elif lty == "Bool" && r == "0":
                                 r = "false"
                             list_push(out_list, str_concat(tr_indent(level), str_concat("mut ", str_concat(lname, str_concat(": ", str_concat(lty, str_concat(" = ", str_concat(r, "\n"))))))))
+                            if clear_null:
+                                list_push(out_list, str_concat(tr_indent(level), str_concat(lname, ".is_null = false\n")))
                             continue
                 mut translated_lhs := cf_translate_expr(lhs)
                 mut translated_rhs := rhs
@@ -635,11 +914,12 @@ def cf_emit_fn_body(body_raw: Str, defined_structs: Map[Str, Int], bool_types: M
                 list_push(out_list, str_concat(tr_indent(level), str_concat(translated_lhs, str_concat(" = ", str_concat(translated_rhs, "\n")))))
                 continue
 
-        list_push(out_list, tr_emit_simple_stmt(cf_translate_expr(line), level))
+        list_push(out_list, tr_emit_simple_stmt(cf_rewrite_str_ops(cf_rewrite_struct_nulls(cf_translate_expr(line), struct_vars), str_vars), level))
     return str_join(out_list, "")
 
 def c2lpp_translate_impl(source: Str) -> Str:
-    lines := str_lines(source)
+    preprocessed := c_preprocess(source)
+    lines := str_lines(preprocessed)
     mut consts_list := list_new()
     mut structs_list := list_new()
     mut funcs_list := list_new()
@@ -656,27 +936,10 @@ def c2lpp_translate_impl(source: Str) -> Str:
     mut count_funcs_seen := 0
     mut count_funcs_translated := 0
 
-    mut in_block_comment := false
     mut i := 0
     n := len(lines)
     while i < n:
         mut line := str_trim(lines[i])
-        if in_block_comment:
-            if str_contains(line, "*/"):
-                end_c := str_find(line, "*/")
-                line = str_trim(str_substr(line, end_c + 2, str_len(line) - end_c - 2))
-                in_block_comment = false
-            else:
-                i = i + 1
-                continue
-        if str_starts_with(line, "/*"):
-            if str_contains(line, "*/"):
-                line = str_trim(cf_strip_inline_block_comments(line))
-            else:
-                in_block_comment = true
-                i = i + 1
-                continue
-        line = str_trim(tr_strip_line_comment(cf_strip_inline_block_comments(line)))
         if str_len(line) == 0:
             i = i + 1
             continue
@@ -799,7 +1062,7 @@ def c2lpp_translate_impl(source: Str) -> Str:
                         list_push(body_list, after_brace)
                 i = i + 1
                 while i < n && depth > 0:
-                    cur := tr_strip_line_comment(cf_strip_inline_block_comments(lines[i]))
+                    cur := lines[i]
                     mut k := 0
                     cn := str_len(cur)
                     mut in_dq := false
@@ -824,12 +1087,14 @@ def c2lpp_translate_impl(source: Str) -> Str:
                     i = i + 1
                 body_str := str_join(body_list, "\n")
                 ret_ty := cf_clean_c_type_for_lpp(pair.0, defined_structs, bool_types)
-                if str_len(fname) > 0 && str_len(ret_ty) > 0 && !map_has(emitted_funcs, fname) && !cf_body_has_unsupported(body_str):
+                if str_len(fname) > 0 && str_len(ret_ty) > 0 && !map_has(emitted_funcs, fname):
                     # Translate parameter list
                     mut p_ok := true
                     mut p_names := list_new()
                     mut p_types := list_new()
                     mut init_svars := list_new()
+                    mut init_str_vars := list_new()
+                    mut init_cur_vars := list_new()
                     ptrim := str_trim(params_raw)
                     if str_len(ptrim) > 0 && ptrim != "void":
                         mut pstart := 0
@@ -850,13 +1115,17 @@ def c2lpp_translate_impl(source: Str) -> Str:
                                     pname := tr_escape_ident(pp.1)
                                     if map_has(defined_structs, pty):
                                         list_push(init_svars, str_concat(pname, ""))
+                                    elif pty == "Str":
+                                        list_push(init_str_vars, str_concat(pname, ""))
+                                    elif pty == "ByteCursor":
+                                        list_push(init_cur_vars, str_concat(pname, ""))
                                     list_push(p_names, pname)
                                     list_push(p_types, pty)
                                 pstart = pi + 1
                             pi = pi + 1
-                    if p_ok:
+                    if p_ok && !cf_body_has_unsupported(body_str, init_str_vars, init_cur_vars):
                         map_put(emitted_funcs, fname, 1)
-                        body_lpp := cf_emit_fn_body(body_str, defined_structs, bool_types, ret_ty, init_svars)
+                        body_lpp := cf_emit_fn_body(body_str, defined_structs, bool_types, ret_ty, init_svars, init_str_vars, init_cur_vars)
                         if str_len(str_trim(body_lpp)) > 0:
                             mut p_out := list_new()
                             mut mut_prelude := list_new()
@@ -873,7 +1142,8 @@ def c2lpp_translate_impl(source: Str) -> Str:
                                 else:
                                     list_push(p_out, str_concat(pn_i, str_concat(": ", pt_i)))
                                 pk = pk + 1
-                            mut sig := str_concat("def ", str_concat(fname, str_concat("(", str_concat(str_join(p_out, ", "), ")"))))
+                            safe_fname := cf_escape_fn_name(fname)
+                            mut sig := str_concat("def ", str_concat(safe_fname, str_concat("(", str_concat(str_join(p_out, ", "), ")"))))
                             if ret_ty != "Void":
                                 sig = str_concat(sig, str_concat(" -> ", ret_ty))
                             sig = str_concat(sig, ":\n")
@@ -902,7 +1172,10 @@ def c2lpp_translate_impl(source: Str) -> Str:
         list_push(sections, "\n")
     if len(structs_list) > 0:
         list_push(sections, str_join(structs_list, ""))
-    list_push(sections, "def c2lpp_fabs(x: Float) -> Float:\n    if x < 0.0:\n        return -x\n    return x\n\ndef c2lpp_byte_at(s: Str, idx: Int) -> Int:\n    if idx < 0 || idx >= str_len(s):\n        return 0\n    return ord(char_at(s, idx))\n\ndef case_insensitive_strcmp(a: Str, b: Str) -> Int:\n    if str_to_lower(a) == str_to_lower(b):\n        return 0\n    return 1\n\n")
+    funcs_joined := str_join(funcs_list, "")
+    shims_text := c2lpp_emit_runtime_shims(funcs_joined)
+    if str_len(shims_text) > 0:
+        list_push(sections, shims_text)
     if len(funcs_list) > 0:
-        list_push(sections, str_join(funcs_list, ""))
+        list_push(sections, funcs_joined)
     return str_join(sections, "")

@@ -1,10 +1,10 @@
 [package]
 name = "c2lpp"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 authors = ["L++ Project"]
-description = "Native-first C-to-L++ translator & FFI binder with 16-byte CSpan bounds-checked native pointers, 8-byte FastHandle, and @repr(C) zero-overhead mapping"
+description = "Pure-L++ Clang AST C-to-L++ translator with auto-dependency translation, automatic OS/C-library bridge, 16-byte CSpan, and 8-byte FastHandle"
 keywords = ["c2lpp", "ffi", "bindgen", "c-translator", "native", "cspan"]
 
 [dependencies]

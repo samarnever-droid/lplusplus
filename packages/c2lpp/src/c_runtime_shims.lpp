@@ -1,0 +1,66 @@
+# c_runtime_shims.lpp — On-Demand Pure-Safe Native L++ Runtime Shims for Translated C Code
+#
+# Zero `extern "C"`, zero `unsafe`. Emits ONLY the helpers actually referenced
+# by a translated L++ file so output stays minimal, fast, and 100% `--secure`.
+
+def c2lpp_emit_runtime_shims(code: Str) -> Str:
+    mut parts := list_new()
+
+    if str_contains(code, "BoolRef"):
+        list_push(parts, "struct BoolRef:\n    val: Bool\n    is_null: Bool\n\ndef BoolRef_null() -> BoolRef:\n    return BoolRef(false, true)\n\n")
+    if str_contains(code, "IntRef"):
+        list_push(parts, "struct IntRef:\n    val: Int\n    is_null: Bool\n\ndef IntRef_null() -> IntRef:\n    return IntRef(0, true)\n\n")
+    if str_contains(code, "FloatRef"):
+        list_push(parts, "struct FloatRef:\n    val: Float\n    is_null: Bool\n\ndef FloatRef_null() -> FloatRef:\n    return FloatRef(0.0, true)\n\n")
+    if str_contains(code, "StrRef"):
+        list_push(parts, "struct StrRef:\n    val: Str\n    is_null: Bool\n\ndef StrRef_null() -> StrRef:\n    return StrRef(\"\", true)\n\n")
+
+    if str_contains(code, "ByteCursor"):
+        list_push(parts, "struct ByteCursor:\n    data: List[Int]\n    pos: Int\n    is_null: Bool\n\ndef ByteCursor_null() -> ByteCursor:\n    return ByteCursor(list_new(), 0, true)\n\ndef c2lpp_cstr_bytes(d: List[Int]) -> ByteCursor:\n    return ByteCursor(d, 0, false)\n\ndef c2lpp_cstr(s: Str) -> ByteCursor:\n    mut d := list_new()\n    mut i := 0\n    n := str_len(s)\n    while i < n:\n        list_push(d, ord(char_at(s, i)))\n        i = i + 1\n    list_push(d, 0)\n    return ByteCursor(d, 0, false)\n\ndef c2lpp_to_str(c: ByteCursor) -> Str:\n    if c.is_null:\n        return \"\"\n    mut out := list_new()\n    mut i := c.pos\n    n := len(c.data)\n    while i < n:\n        b := c.data[i]\n        if b == 0:\n            break\n        list_push(out, chr(b))\n        i = i + 1\n    return str_join(out, \"\")\n\ndef c2lpp_cur_alloc(size: Int) -> ByteCursor:\n    mut d := list_new()\n    mut i := 0\n    mut cap := size\n    if cap < 1:\n        cap = 1\n    while i < cap:\n        list_push(d, 0)\n        i = i + 1\n    return ByteCursor(d, 0, false)\n\ndef c2lpp_cur_realloc(old: ByteCursor, new_size: Int) -> ByteCursor:\n    if old.is_null:\n        return c2lpp_cur_alloc(new_size)\n    mut d := old.data\n    while len(d) < new_size:\n        list_push(d, 0)\n    return ByteCursor(d, old.pos, false)\n\ndef c2lpp_cur_add(c: ByteCursor, off: Int) -> ByteCursor:\n    if c.is_null:\n        return ByteCursor_null()\n    return ByteCursor(c.data, c.pos + off, false)\n\ndef c2lpp_cur_sub(a: ByteCursor, b: ByteCursor) -> Int:\n    return a.pos - b.pos\n\ndef c2lpp_cur_get(c: ByteCursor, off: Int) -> Int:\n    if c.is_null:\n        return 0\n    idx := c.pos + off\n    if idx < 0 || idx >= len(c.data):\n        return 0\n    return c.data[idx]\n\ndef c2lpp_cur_set(c: ByteCursor, off: Int, val: Int):\n    if c.is_null:\n        return\n    idx := c.pos + off\n    while idx >= len(c.data):\n        list_push(c.data, 0)\n    if idx >= 0:\n        c.data[idx] = val & 255\n\ndef c2lpp_cur_write_inc(c: ByteCursor, val: Int):\n    c2lpp_cur_set(c, 0, val)\n    c.pos = c.pos + 1\n\ndef c2lpp_cur_read_inc(c: ByteCursor) -> Int:\n    v := c2lpp_cur_get(c, 0)\n    c.pos = c.pos + 1\n    return v\n\ndef c2lpp_strlen(c: ByteCursor) -> Int:\n    if c.is_null:\n        return 0\n    mut i := c.pos\n    n := len(c.data)\n    while i < n && c.data[i] != 0:\n        i = i + 1\n    return i - c.pos\n\ndef c2lpp_strcmp(a: ByteCursor, b: ByteCursor) -> Int:\n    mut i := 0\n    while true:\n        ca := c2lpp_cur_get(a, i)\n        cb := c2lpp_cur_get(b, i)\n        if ca != cb:\n            return ca - cb\n        if ca == 0:\n            return 0\n        i = i + 1\n    return 0\n\ndef c2lpp_strncmp(a: ByteCursor, b: ByteCursor, n: Int) -> Int:\n    mut i := 0\n    while i < n:\n        ca := c2lpp_cur_get(a, i)\n        cb := c2lpp_cur_get(b, i)\n        if ca != cb:\n            return ca - cb\n        if ca == 0:\n            return 0\n        i = i + 1\n    return 0\n\ndef c2lpp_strcpy(dst: ByteCursor, src: ByteCursor) -> ByteCursor:\n    mut i := 0\n    while true:\n        b := c2lpp_cur_get(src, i)\n        c2lpp_cur_set(dst, i, b)\n        if b == 0:\n            break\n        i = i + 1\n    return dst\n\ndef c2lpp_memcpy(dst: ByteCursor, src: ByteCursor, n: Int) -> ByteCursor:\n    mut i := 0\n    while i < n:\n        c2lpp_cur_set(dst, i, c2lpp_cur_get(src, i))\n        i = i + 1\n    return dst\n\ndef c2lpp_memcmp(a: ByteCursor, b: ByteCursor, n: Int) -> Int:\n    mut i := 0\n    while i < n:\n        ca := c2lpp_cur_get(a, i)\n        cb := c2lpp_cur_get(b, i)\n        if ca != cb:\n            return ca - cb\n        i = i + 1\n    return 0\n\ndef c2lpp_memset(dst: ByteCursor, val: Int, n: Int) -> ByteCursor:\n    mut i := 0\n    while i < n:\n        c2lpp_cur_set(dst, i, val)\n        i = i + 1\n    return dst\n\n")
+
+    if str_contains(code, "ByteCursorRef"):
+        list_push(parts, "struct ByteCursorRef:\n    val: ByteCursor\n    is_null: Bool\n\ndef ByteCursorRef_null() -> ByteCursorRef:\n    return ByteCursorRef(ByteCursor_null(), true)\n\n")
+
+    if str_contains(code, "c2lpp_fabs("):
+        list_push(parts, "def c2lpp_fabs(x: Float) -> Float:\n    if x < 0.0:\n        return -x\n    return x\n\n")
+
+    if str_contains(code, "c2lpp_isnan("):
+        list_push(parts, "def c2lpp_isnan(x: Float) -> Bool:\n    return x != x\n\n")
+
+    if str_contains(code, "c2lpp_isinf("):
+        list_push(parts, "def c2lpp_isinf(x: Float) -> Bool:\n    return (x > 1.7976931348623157e308) || (x < -1.7976931348623157e308)\n\n")
+
+    if str_contains(code, "c2lpp_byte_at("):
+        list_push(parts, "def c2lpp_byte_at(s: Str, idx: Int) -> Int:\n    if idx < 0 || idx >= str_len(s):\n        return 0\n    return ord(char_at(s, idx))\n\n")
+
+    if str_contains(code, "c2lpp_str_advance("):
+        list_push(parts, "def c2lpp_str_advance(s: Str, n: Int) -> Str:\n    slen := str_len(s)\n    if n <= 0:\n        return s\n    if n >= slen:\n        return \"\"\n    return str_substr(s, n, slen - n)\n\n")
+
+    if str_contains(code, "c2lpp_tolower("):
+        list_push(parts, "def c2lpp_tolower(c: Int) -> Int:\n    if c >= 65 && c <= 90:\n        return c + 32\n    return c\n\n")
+
+    if str_contains(code, "c2lpp_toupper("):
+        list_push(parts, "def c2lpp_toupper(c: Int) -> Int:\n    if c >= 97 && c <= 122:\n        return c - 32\n    return c\n\n")
+
+    if str_contains(code, "c2lpp_isdigit("):
+        list_push(parts, "def c2lpp_isdigit(c: Int) -> Bool:\n    return c >= 48 && c <= 57\n\n")
+
+    if str_contains(code, "c2lpp_isspace("):
+        list_push(parts, "def c2lpp_isspace(c: Int) -> Bool:\n    return c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12\n\n")
+
+    if str_contains(code, "c2lpp_strtod("):
+        list_push(parts, "def c2lpp_strtod(s: ByteCursor, endptr: ByteCursorRef) -> Float:\n    mut i := 0\n    while c2lpp_cur_get(s, i) == 32 || c2lpp_cur_get(s, i) == 9 || c2lpp_cur_get(s, i) == 10 || c2lpp_cur_get(s, i) == 13:\n        i = i + 1\n    mut sign := 1.0\n    if c2lpp_cur_get(s, i) == 45:\n        sign = -1.0\n        i = i + 1\n    elif c2lpp_cur_get(s, i) == 43:\n        i = i + 1\n    mut val := 0.0\n    mut has_digits := false\n    while c2lpp_cur_get(s, i) >= 48 && c2lpp_cur_get(s, i) <= 57:\n        val = val * 10.0 + ((c2lpp_cur_get(s, i) - 48) as Float)\n        has_digits = true\n        i = i + 1\n    if c2lpp_cur_get(s, i) == 46:\n        i = i + 1\n        mut scale := 0.1\n        while c2lpp_cur_get(s, i) >= 48 && c2lpp_cur_get(s, i) <= 57:\n            val = val + ((c2lpp_cur_get(s, i) - 48) as Float) * scale\n            scale = scale * 0.1\n            has_digits = true\n            i = i + 1\n    if !has_digits:\n        if !endptr.is_null:\n            endptr.val = c2lpp_cur_add(s, 0)\n        return 0.0\n    if c2lpp_cur_get(s, i) == 101 || c2lpp_cur_get(s, i) == 69:\n        mut j := i + 1\n        mut esign := 1\n        if c2lpp_cur_get(s, j) == 45:\n            esign = -1\n            j = j + 1\n        elif c2lpp_cur_get(s, j) == 43:\n            j = j + 1\n        mut exp_val := 0\n        mut has_exp := false\n        while c2lpp_cur_get(s, j) >= 48 && c2lpp_cur_get(s, j) <= 57:\n            exp_val = exp_val * 10 + (c2lpp_cur_get(s, j) - 48)\n            has_exp = true\n            j = j + 1\n        if has_exp:\n            i = j\n            val = val * pow(10.0, (esign * exp_val) as Float)\n    if !endptr.is_null:\n        endptr.val = c2lpp_cur_add(s, i)\n    return sign * val\n\n")
+
+    if str_contains(code, "c2lpp_snprintf_"):
+        list_push(parts, "def c2lpp_snprintf_str(dst: ByteCursor, cap: Int, s: Str) -> Int:\n    n := str_len(s)\n    mut i := 0\n    while i < n && i + 1 < cap:\n        c2lpp_cur_set(dst, i, ord(char_at(s, i)))\n        i = i + 1\n    if cap > 0:\n        c2lpp_cur_set(dst, i, 0)\n    return n\n\ndef c2lpp_snprintf_hex4(dst: ByteCursor, val: Int) -> Int:\n    digits := \"0123456789abcdef\"\n    v := val & 65535\n    c2lpp_cur_set(dst, 0, ord(char_at(digits, (v >> 12) & 15)))\n    c2lpp_cur_set(dst, 1, ord(char_at(digits, (v >> 8) & 15)))\n    c2lpp_cur_set(dst, 2, ord(char_at(digits, (v >> 4) & 15)))\n    c2lpp_cur_set(dst, 3, ord(char_at(digits, v & 15)))\n    c2lpp_cur_set(dst, 4, 0)\n    return 4\n\n")
+
+    if str_contains(code, "c2lpp_sscanf_double("):
+        list_push(parts, "def c2lpp_sscanf_double(buf: ByteCursor, out_val: FloatRef) -> Int:\n    end_ref := ByteCursorRef(ByteCursor_null(), false)\n    v := c2lpp_strtod(buf, end_ref)\n    if end_ref.val.pos == buf.pos:\n        return 0\n    out_val.val = v\n    return 1\n\n")
+
+    if str_contains(code, "c2lpp_getenv("):
+        list_push(parts, "def c2lpp_getenv(name: ByteCursor) -> ByteCursor:\n    s := env_get(c2lpp_to_str(name))\n    if str_len(s) == 0:\n        return ByteCursor_null()\n    return c2lpp_cstr(s)\n\n")
+
+    if str_contains(code, "case_insensitive_strcmp(") && !str_contains(code, "def case_insensitive_strcmp("):
+        list_push(parts, "def case_insensitive_strcmp(a: Str, b: Str) -> Int:\n    if str_to_lower(a) == str_to_lower(b):\n        return 0\n    return 1\n\n")
+
+    return str_join(parts, "")

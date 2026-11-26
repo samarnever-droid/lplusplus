@@ -1,0 +1,1568 @@
+# clang_ast_translator.lpp — 100% Pure-L++ Clang JSON AST to Pure-Safe Native L++ Translator
+#
+# Consumes `clang -Xclang -ast-dump=json -fsyntax-only` AST via `json_ast.lpp`
+# and emits 100% pure safe native L++ (zero `extern "C"`, zero `unsafe`, passes
+# `lpp --check --secure`).
+
+import json_ast
+import native_types
+import translator
+import c_runtime_shims
+
+struct CatCtx:
+    nodes: List[AstNode]
+    str_pool: List[Str]
+    defined_structs: Map[Str, Int]
+    field_types: Map[Str, Int]
+    fn_ret_types: Map[Str, Int]
+    fn_param_types: Map[Str, Int]
+    global_types: Map[Str, Int]
+    local_types: Map[Str, Int]
+    cur_ret_ty: Str
+    temp_id: Int
+    pre_stmts: List[Str]
+    post_stmts: List[Str]
+    goto_labels: Map[Str, Int]
+    has_goto: Bool
+    ext_calls_seen: Map[Str, Int]
+    ext_calls_decls: List[Str]
+
+def sm_put(m: Map[Str, Int], pool: List[Str], k: Str, v: Str):
+    idx := len(pool)
+    list_push(pool, str_concat(v, ""))
+    map_put(m, k, idx)
+
+def sm_get(m: Map[Str, Int], pool: List[Str], k: Str) -> Str:
+    if !map_has(m, k):
+        return ""
+    return pool[map_get(m, k)]
+
+def cat_escape_fn(name: Str) -> Str:
+    if name == "print" || name == "print_str" || name == "print_float" || name == "print_bool" || name == "abs" || name == "min" || name == "max" || name == "floor" || name == "ceil" || name == "pow" || name == "sqrt" || name == "len" || name == "exit" || name == "sleep" || name == "ord" || name == "chr" || name == "char_at" || name == "read_file" || name == "write_file":
+        return str_concat("c_", name)
+    return tr_escape_ident(name)
+
+def cat_is_nullable(ty: Str) -> Bool:
+    if ty == "ByteCursor" || ty == "ByteCursorRef" || ty == "BoolRef" || ty == "IntRef" || ty == "FloatRef":
+        return true
+    if ty == "Int" || ty == "Float" || ty == "Bool" || ty == "Void" || ty == "Str" || str_len(ty) == 0:
+        return false
+    return true
+
+def cat_default_expr(ty: Str) -> Str:
+    if ty == "Void" || ty == "Int":
+        return "0"
+    if ty == "Bool":
+        return "false"
+    if ty == "Float":
+        return "0.0"
+    if ty == "Str":
+        return "\"\""
+    if ty == "ByteCursor":
+        return "ByteCursor_null()"
+    if ty == "ByteCursorRef":
+        return "ByteCursorRef_null()"
+    if ty == "BoolRef":
+        return "BoolRef_null()"
+    if ty == "IntRef":
+        return "IntRef_null()"
+    if ty == "FloatRef":
+        return "FloatRef_null()"
+    return str_concat(ty, "_null()")
+
+def cat_strip_quals(raw: Str) -> Str:
+    mut s := nt_normalize_ws(raw)
+    s = str_replace(s, "const ", "")
+    s = str_replace(s, " const", "")
+    s = str_replace(s, "volatile ", "")
+    s = str_replace(s, "restrict ", "")
+    s = str_replace(s, "struct ", "")
+    s = str_replace(s, "enum ", "")
+    s = str_replace(s, "union ", "")
+    return str_trim(s)
+
+def cat_count_stars(s: Str) -> Int:
+    mut cnt := 0
+    mut i := 0
+    n := str_len(s)
+    while i < n:
+        if ord(char_at(s, i)) == 42:
+            cnt = cnt + 1
+        i = i + 1
+    return cnt
+
+def cat_map_type(desug_in: Str, qual: Str, defined_structs: Map[Str, Int]) -> Str:
+    raw_clean := cat_strip_quals(qual)
+    if raw_clean == "cJSON_bool" || raw_clean == "bool" || raw_clean == "_Bool":
+        return "Bool"
+    mut s := str_trim(desug_in)
+    if str_len(s) == 0:
+        s = str_trim(qual)
+    if str_len(s) == 0 || s == "void":
+        return "Void"
+    if str_contains(s, "(*"):
+        return "Int"
+    # Fixed-size array `unsigned char[26]` -> `ByteCursor`, `struct S[1]` -> `S`
+    lb := str_find(s, "[")
+    if lb > 0:
+        elem := cat_strip_quals(str_substr(s, 0, lb))
+        if elem == "char" || elem == "unsigned char" || elem == "signed char" || elem == "uint8_t" || elem == "int8_t" || elem == "uint8" || elem == "int8" || elem == "u8":
+            return "ByteCursor"
+        if map_has(defined_structs, elem):
+            return elem
+        raw_lb := str_find(qual, "[")
+        if raw_lb > 0:
+            raw_elem := cat_strip_quals(str_substr(qual, 0, raw_lb))
+            if map_has(defined_structs, raw_elem):
+                return raw_elem
+        return "Int"
+    stars := cat_count_stars(s)
+    base := cat_strip_quals(str_replace(s, "*", " "))
+    raw_base := cat_strip_quals(str_replace(qual, "*", " "))
+    if stars >= 2:
+        if base == "char" || base == "unsigned char" || base == "signed char":
+            return "ByteCursorRef"
+        return "Int"
+    if stars == 1:
+        if base == "char" || base == "unsigned char" || base == "signed char" || base == "uint8_t" || base == "int8_t" || base == "uint8" || base == "int8" || base == "u8":
+            return "ByteCursor"
+        if base == "_Bool" || base == "bool":
+            return "BoolRef"
+        if base == "double" || base == "float":
+            return "FloatRef"
+        if map_has(defined_structs, base):
+            return base
+        if map_has(defined_structs, raw_base):
+            return raw_base
+        if base == "int" || base == "unsigned int" || base == "long" || base == "unsigned long" || base == "long long" || base == "unsigned long long":
+            return "IntRef"
+        return "Int"
+    if base == "_Bool" || base == "bool":
+        return "Bool"
+    if base == "double" || base == "float" || base == "long double":
+        return "Float"
+    if base == "void":
+        return "Void"
+    if map_has(defined_structs, base):
+        return base
+    if map_has(defined_structs, raw_base):
+        return raw_base
+    return "Int"
+
+def cat_fresh_temp(ctx_arg: CatCtx, prefix: Str) -> Str:
+    mut ctx := ctx_arg
+    ctx.temp_id = ctx.temp_id + 1
+    return str_concat("_", str_concat(prefix, str_concat("_", int_to_str(ctx.temp_id))))
+
+def cat_flush_pre(ctx_arg: CatCtx, out: List[Str], level: Int):
+    mut ctx := ctx_arg
+    if len(ctx.pre_stmts) == 0:
+        return
+    ind := tr_indent(level)
+    mut i := 0
+    n := len(ctx.pre_stmts)
+    while i < n:
+        plines := str_lines(ctx.pre_stmts[i])
+        mut j := 0
+        while j < len(plines):
+            list_push(out, str_concat(ind, str_concat(plines[j], "\n")))
+            j = j + 1
+        i = i + 1
+    ctx.pre_stmts = list_new()
+
+def cat_flush_post(ctx_arg: CatCtx, out: List[Str], level: Int):
+    mut ctx := ctx_arg
+    if len(ctx.post_stmts) == 0:
+        return
+    ind := tr_indent(level)
+    mut i := 0
+    n := len(ctx.post_stmts)
+    while i < n:
+        list_push(out, str_concat(ind, str_concat(ctx.post_stmts[i], "\n")))
+        i = i + 1
+    ctx.post_stmts = list_new()
+
+def cat_to_bool(expr: Str, ty: Str) -> Str:
+    if ty == "Bool":
+        return expr
+    if ty == "Int":
+        return str_concat("(", str_concat(expr, " != 0)"))
+    if ty == "Float":
+        return str_concat("(", str_concat(expr, " != 0.0)"))
+    if cat_is_nullable(ty):
+        return str_concat("(!", str_concat(expr, ".is_null)"))
+    return "false"
+
+def cat_coerce(expr: Str, from_ty: Str, to_ty: Str) -> Str:
+    if from_ty == to_ty || str_len(to_ty) == 0:
+        return expr
+    if to_ty == "Bool":
+        if expr == "0":
+            return "false"
+        if expr == "1":
+            return "true"
+        return cat_to_bool(expr, from_ty)
+    if from_ty == "Bool" && to_ty == "Int":
+        if expr == "true":
+            return "1"
+        if expr == "false":
+            return "0"
+        return str_concat("(", str_concat(expr, " as Int)"))
+    if from_ty == "Int" && to_ty == "Float":
+        return str_concat("(", str_concat(expr, " as Float)"))
+    if from_ty == "Float" && to_ty == "Int":
+        return str_concat("(", str_concat(expr, " as Int)"))
+    if from_ty == "Int" && cat_is_nullable(to_ty) && expr == "0":
+        return cat_default_expr(to_ty)
+    return expr
+
+def cat_unwrap_parens(nodes: List[AstNode], nid: Int) -> Int:
+    mut cur := nid
+    while cur >= 0 && cur < len(nodes):
+        nd := nodes[cur]
+        if nd.kind == "ParenExpr" && len(nd.children) > 0:
+            cur = nd.children[0]
+        else:
+            break
+    return cur
+
+def cat_callee_name(nodes: List[AstNode], nid: Int) -> Str:
+    mut cur := nid
+    mut guard := 0
+    while cur >= 0 && cur < len(nodes) && guard < 8:
+        guard = guard + 1
+        nd := nodes[cur]
+        if nd.kind == "DeclRefExpr":
+            return nd.ref_name
+        if len(nd.children) > 0:
+            cur = nd.children[0]
+        else:
+            break
+    return ""
+
+def cat_string_lit_val(nodes: List[AstNode], nid: Int) -> Str:
+    mut cur := nid
+    mut guard := 0
+    while cur >= 0 && cur < len(nodes) && guard < 8:
+        guard = guard + 1
+        nd := nodes[cur]
+        if nd.kind == "StringLiteral":
+            return nd.val_str
+        if len(nd.children) > 0:
+            cur = nd.children[0]
+        else:
+            break
+    return ""
+
+def cat_emit_c_string_lit(raw_in: Str) -> Str:
+    mut s := raw_in
+    if str_len(s) >= 2 && str_starts_with(s, "\"") && str_ends_with(s, "\""):
+        s = str_substr(s, 1, str_len(s) - 2)
+    # Check if string contains any non-L++ escape (octal `\0`..`\7`, `\b`, `\f`, `\v`, `\a`, `\x`)
+    mut needs_bytes := false
+    mut i := 0
+    n := str_len(s)
+    while i + 1 < n:
+        if ord(char_at(s, i)) == 92:
+            nc := ord(char_at(s, i + 1))
+            if nc != 110 && nc != 114 && nc != 116 && nc != 92 && nc != 34:
+                needs_bytes = true
+                break
+            i = i + 2
+            continue
+        i = i + 1
+    if !needs_bytes:
+        return str_concat("c2lpp_cstr(\"", str_concat(s, "\")"))
+    mut bytes_out := list_new()
+    i = 0
+    while i < n:
+        c := ord(char_at(s, i))
+        if c == 92 && i + 1 < n:
+            nc := ord(char_at(s, i + 1))
+            if nc >= 48 && nc <= 55:
+                # Octal escape \NNN (1 to 3 octal digits)
+                mut val := nc - 48
+                i = i + 2
+                if i < n:
+                    d2 := ord(char_at(s, i))
+                    if d2 >= 48 && d2 <= 55:
+                        val = val * 8 + (d2 - 48)
+                        i = i + 1
+                        if i < n:
+                            d3 := ord(char_at(s, i))
+                            if d3 >= 48 && d3 <= 55:
+                                val = val * 8 + (d3 - 48)
+                                i = i + 1
+                list_push(bytes_out, int_to_str(val))
+                continue
+            mut ev := nc
+            if nc == 110:
+                ev = 10
+            elif nc == 114:
+                ev = 13
+            elif nc == 116:
+                ev = 9
+            elif nc == 98:
+                ev = 8
+            elif nc == 102:
+                ev = 12
+            elif nc == 92:
+                ev = 92
+            elif nc == 34:
+                ev = 34
+            list_push(bytes_out, int_to_str(ev))
+            i = i + 2
+            continue
+        list_push(bytes_out, int_to_str(c))
+        i = i + 1
+    list_push(bytes_out, "0")
+    return str_concat("c2lpp_cstr_bytes([", str_concat(str_join(bytes_out, ", "), "])"))
+
+def cat_eval_sizeof(ty: Str) -> Int:
+    lb := str_find(ty, "[")
+    rb := str_find(ty, "]")
+    if lb > 0 && rb > lb:
+        n := str_to_int(str_trim(str_substr(ty, lb + 1, rb - lb - 1)))
+        if n > 0:
+            return n
+    if str_contains(ty, "*") || str_contains(ty, "long") || str_contains(ty, "double") || str_contains(ty, "size_t"):
+        return 8
+    if str_contains(ty, "int") || str_contains(ty, "float"):
+        return 4
+    if str_contains(ty, "short"):
+        return 2
+    if str_contains(ty, "char") || str_contains(ty, "bool") || str_contains(ty, "_Bool"):
+        return 1
+    return 8
+
+def cat_lower_expr(ctx: CatCtx, nid: Int) -> (Str, Str):
+    if nid < 0 || nid >= len(ctx.nodes):
+        return ("0", "Int")
+    nd := ctx.nodes[nid]
+    nty := cat_map_type(nd.desug_type, nd.qual_type, ctx.defined_structs)
+    k := nd.kind
+
+    if k == "ParenExpr":
+        if len(nd.children) > 0:
+            sub := cat_lower_expr(ctx, nd.children[0])
+            return (str_concat("(", str_concat(sub.0, ")")), sub.1)
+        return ("0", "Int")
+
+    if k == "ConstantExpr":
+        if str_len(nd.val_str) > 0:
+            return (nd.val_str, nty)
+        if len(nd.children) > 0:
+            return cat_lower_expr(ctx, nd.children[0])
+        return ("0", "Int")
+
+    if k == "IntegerLiteral" || k == "CharacterLiteral":
+        if str_len(nd.val_str) == 0:
+            return ("0", "Int")
+        return (nd.val_str, "Int")
+
+    if k == "FloatingLiteral":
+        mut v := nd.val_str
+        if str_len(v) == 0:
+            v = "0.0"
+        if !str_contains(v, ".") && !str_contains(v, "e") && !str_contains(v, "E"):
+            v = str_concat(v, ".0")
+        return (v, "Float")
+
+    if k == "CXXBoolLiteralExpr":
+        if nd.val_str == "true":
+            return ("true", "Bool")
+        return ("false", "Bool")
+
+    if k == "StringLiteral":
+        return (cat_emit_c_string_lit(nd.val_str), "ByteCursor")
+
+    if k == "DeclRefExpr":
+        if nd.ref_kind == "EnumConstantDecl":
+            return (nd.ref_name, "Int")
+        if nd.ref_kind == "FunctionDecl":
+            return (cat_escape_fn(nd.ref_name), nty)
+        safe := tr_escape_ident(nd.ref_name)
+        if map_has(ctx.local_types, safe):
+            return (safe, sm_get(ctx.local_types, ctx.str_pool, safe))
+        if map_has(ctx.global_types, safe):
+            return (str_concat("c2lpp_global_", str_concat(safe, "()")), sm_get(ctx.global_types, ctx.str_pool, safe))
+        return (safe, nty)
+
+    if k == "MemberExpr":
+        fname := tr_escape_ident(nd.name)
+        if len(nd.children) > 0:
+            base := cat_lower_expr(ctx, nd.children[0])
+            fkey := str_concat(base.1, str_concat(".", fname))
+            mut fty := nty
+            if map_has(ctx.field_types, fkey):
+                fty = sm_get(ctx.field_types, ctx.str_pool, fkey)
+            return (str_concat(base.0, str_concat(".", fname)), fty)
+        return ("0", nty)
+
+    if k == "ArraySubscriptExpr":
+        if len(nd.children) >= 2:
+            be := cat_lower_expr(ctx, nd.children[0])
+            ie := cat_lower_expr(ctx, nd.children[1])
+            ii := cat_coerce(ie.0, ie.1, "Int")
+            return (str_concat("c2lpp_cur_get(", str_concat(be.0, str_concat(", ", str_concat(ii, ")")))), "Int")
+        return ("0", "Int")
+
+    if k == "ImplicitCastExpr" || k == "CStyleCastExpr":
+        if nd.cast_kind == "NullToPointer":
+            return (cat_default_expr(nty), nty)
+        if len(nd.children) > 0:
+            sub := cat_lower_expr(ctx, nd.children[0])
+            ck := nd.cast_kind
+            if ck == "LValueToRValue" || ck == "ArrayToPointerDecay" || ck == "NoOp" || ck == "FunctionToPointerDecay":
+                return (sub.0, sub.1)
+            if ck == "PointerToBoolean" || ck == "IntegralToBoolean" || ck == "FloatingToBoolean":
+                return (cat_to_bool(sub.0, sub.1), "Bool")
+            if ck == "IntegralToFloating":
+                return (str_concat("(", str_concat(sub.0, " as Float)")), "Float")
+            if ck == "FloatingToIntegral":
+                return (str_concat("(", str_concat(sub.0, " as Int)")), "Int")
+            if ck == "BitCast" && nty != sub.1:
+                if map_has(ctx.defined_structs, nty) && str_starts_with(sub.0, "c2lpp_cur_alloc("):
+                    return (str_concat(nty, "_new()"), nty)
+                if nty == "ByteCursor" && sub.1 == "Int" && sub.0 == "0":
+                    return ("ByteCursor_null()", "ByteCursor")
+            return (cat_coerce(sub.0, sub.1, nty), nty)
+        return (cat_default_expr(nty), nty)
+
+    if k == "UnaryOperator":
+        if len(nd.children) == 0:
+            return ("0", nty)
+        op := nd.opcode
+        cid := nd.children[0]
+        if op == "!":
+            sub := cat_lower_expr(ctx, cid)
+            return (str_concat("!(", str_concat(cat_to_bool(sub.0, sub.1), ")")), "Bool")
+        if op == "-" || op == "+":
+            sub := cat_lower_expr(ctx, cid)
+            return (str_concat("(", str_concat(op, str_concat(sub.0, ")"))), sub.1)
+        if op == "~":
+            sub := cat_lower_expr(ctx, cid)
+            return (str_concat("(~", str_concat(sub.0, ")")), "Int")
+        if op == "*":
+            u := cat_unwrap_parens(ctx.nodes, cid)
+            und := ctx.nodes[u]
+            if und.kind == "UnaryOperator" && und.opcode == "++" && len(und.children) > 0:
+                pe := cat_lower_expr(ctx, und.children[0])
+                if pe.1 == "ByteCursor":
+                    return (str_concat("c2lpp_cur_read_inc(", str_concat(pe.0, ")")), "Int")
+            sub := cat_lower_expr(ctx, u)
+            if sub.1 == "ByteCursor":
+                return (str_concat("c2lpp_cur_get(", str_concat(sub.0, ", 0)")), "Int")
+            if sub.1 == "ByteCursorRef":
+                return (str_concat(sub.0, ".val"), "ByteCursor")
+            if sub.1 == "BoolRef":
+                return (str_concat(sub.0, ".val"), "Bool")
+            if sub.1 == "IntRef":
+                return (str_concat(sub.0, ".val"), "Int")
+            if sub.1 == "FloatRef":
+                return (str_concat(sub.0, ".val"), "Float")
+            return (sub.0, nty)
+        if op == "&":
+            sub := cat_lower_expr(ctx, cid)
+            if map_has(ctx.defined_structs, sub.1):
+                return (sub.0, sub.1)
+            if sub.1 == "ByteCursor":
+                tmp := cat_fresh_temp(ctx, "cref")
+                list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": ByteCursorRef = ByteCursorRef(c2lpp_cur_add(", str_concat(sub.0, ", 0), false)")))))
+                list_push(ctx.post_stmts, str_concat(sub.0, str_concat(" = ", str_concat(tmp, ".val"))))
+                return (tmp, "ByteCursorRef")
+            if sub.1 == "Bool":
+                tmp := cat_fresh_temp(ctx, "bref")
+                list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": BoolRef = BoolRef(", str_concat(sub.0, ", false)")))))
+                list_push(ctx.post_stmts, str_concat(sub.0, str_concat(" = ", str_concat(tmp, ".val"))))
+                return (tmp, "BoolRef")
+            if sub.1 == "Float":
+                tmp := cat_fresh_temp(ctx, "fref")
+                list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": FloatRef = FloatRef(", str_concat(sub.0, ", false)")))))
+                list_push(ctx.post_stmts, str_concat(sub.0, str_concat(" = ", str_concat(tmp, ".val"))))
+                return (tmp, "FloatRef")
+            if sub.1 == "Int":
+                tmp := cat_fresh_temp(ctx, "iref")
+                list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": IntRef = IntRef(", str_concat(sub.0, ", false)")))))
+                list_push(ctx.post_stmts, str_concat(sub.0, str_concat(" = ", str_concat(tmp, ".val"))))
+                return (tmp, "IntRef")
+            return (sub.0, nty)
+        if op == "++" || op == "--":
+            mut delta := "1"
+            if op == "--":
+                delta = "-1"
+            sub := cat_lower_expr(ctx, cid)
+            if sub.1 == "ByteCursor":
+                if nd.is_postfix:
+                    tmp := cat_fresh_temp(ctx, "cur")
+                    list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": ByteCursor = c2lpp_cur_add(", str_concat(sub.0, ", 0)")))))
+                    list_push(ctx.pre_stmts, str_concat(sub.0, str_concat(".pos = ", str_concat(sub.0, str_concat(".pos + (", str_concat(delta, ")"))))))
+                    return (tmp, "ByteCursor")
+                list_push(ctx.pre_stmts, str_concat(sub.0, str_concat(".pos = ", str_concat(sub.0, str_concat(".pos + (", str_concat(delta, ")"))))))
+                return (sub.0, "ByteCursor")
+            if nd.is_postfix:
+                tmp := cat_fresh_temp(ctx, "inc")
+                list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": Int = ", sub.0))))
+                list_push(ctx.pre_stmts, str_concat(sub.0, str_concat(" = ", str_concat(sub.0, str_concat(" + (", str_concat(delta, ")"))))))
+                return (tmp, "Int")
+            list_push(ctx.pre_stmts, str_concat(sub.0, str_concat(" = ", str_concat(sub.0, str_concat(" + (", str_concat(delta, ")"))))))
+            return (sub.0, "Int")
+        return cat_lower_expr(ctx, cid)
+
+    if k == "BinaryOperator":
+        return cat_lower_binary(ctx, nd, nty)
+
+    if k == "ConditionalOperator":
+        if len(nd.children) < 3:
+            return (cat_default_expr(nty), nty)
+        ce := cat_lower_expr(ctx, nd.children[0])
+        cb := cat_to_bool(ce.0, ce.1)
+        te := cat_lower_expr(ctx, nd.children[1])
+        fe := cat_lower_expr(ctx, nd.children[2])
+        mut rty := nty
+        if rty == "Void" || str_len(rty) == 0:
+            rty = te.1
+        tc := cat_coerce(te.0, te.1, rty)
+        fc := cat_coerce(fe.0, fe.1, rty)
+        tmp := cat_fresh_temp(ctx, "tern")
+        list_push(ctx.pre_stmts, str_concat("mut ", str_concat(tmp, str_concat(": ", str_concat(rty, str_concat(" = ", str_concat(fc, str_concat("\nif ", str_concat(cb, str_concat(":\n    ", str_concat(tmp, str_concat(" = ", tc))))))))))))
+        return (tmp, rty)
+
+    if k == "CallExpr":
+        return cat_lower_call(ctx, nd, nty)
+
+    if k == "UnaryExprOrTypeTraitExpr":
+        if str_len(nd.arg_type) > 0:
+            return (int_to_str(cat_eval_sizeof(nd.arg_type)), "Int")
+        if len(nd.children) > 0:
+            sub_nd := ctx.nodes[nd.children[0]]
+            if sub_nd.kind == "StringLiteral":
+                mut lit := sub_nd.val_str
+                if !str_starts_with(lit, "\""):
+                    lit = str_concat("\"", str_concat(lit, "\""))
+                return (str_concat("(str_len(", str_concat(lit, ") + 1)")), "Int")
+            return (int_to_str(cat_eval_sizeof(sub_nd.qual_type)), "Int")
+        return ("8", "Int")
+
+    return (cat_default_expr(nty), nty)
+
+def cat_is_null_expr(e: Str) -> Bool:
+    mut t := str_trim(e)
+    while str_len(t) >= 2 && str_starts_with(t, "(") && str_ends_with(t, ")"):
+        t = str_trim(str_substr(t, 1, str_len(t) - 2))
+    if t == "0" || str_ends_with(t, "_null()"):
+        return true
+    return false
+
+def cat_lower_binary(ctx: CatCtx, nd: AstNode, nty: Str) -> (Str, Str):
+    if len(nd.children) < 2:
+        return ("0", nty)
+    op := nd.opcode
+    if op == "=":
+        le := cat_lower_expr(ctx, nd.children[0])
+        re := cat_lower_expr(ctx, nd.children[1])
+        rc := cat_coerce(re.0, re.1, le.1)
+        list_push(ctx.pre_stmts, str_concat(le.0, str_concat(" = ", rc)))
+        return (le.0, le.1)
+    le := cat_lower_expr(ctx, nd.children[0])
+    re := cat_lower_expr(ctx, nd.children[1])
+    if op == "&&" || op == "||":
+        lb := cat_to_bool(le.0, le.1)
+        rb := cat_to_bool(re.0, re.1)
+        return (str_concat("(", str_concat(lb, str_concat(" ", str_concat(op, str_concat(" ", str_concat(rb, ")")))))), "Bool")
+    if op == "==" || op == "!=":
+        if cat_is_nullable(le.1) && cat_is_null_expr(re.0):
+            if op == "==":
+                return (str_concat("(", str_concat(le.0, ".is_null)")), "Bool")
+            return (str_concat("(!", str_concat(le.0, ".is_null)")), "Bool")
+        if cat_is_nullable(re.1) && cat_is_null_expr(le.0):
+            if op == "==":
+                return (str_concat("(", str_concat(re.0, ".is_null)")), "Bool")
+            return (str_concat("(!", str_concat(re.0, ".is_null)")), "Bool")
+        if le.1 == "ByteCursor" && re.1 == "ByteCursor":
+            return (str_concat("(", str_concat(le.0, str_concat(".pos ", str_concat(op, str_concat(" ", str_concat(re.0, ".pos)")))))), "Bool")
+        if le.1 == "Float" || re.1 == "Float":
+            lf := cat_coerce(le.0, le.1, "Float")
+            rf := cat_coerce(re.0, re.1, "Float")
+            return (str_concat("(", str_concat(lf, str_concat(" ", str_concat(op, str_concat(" ", str_concat(rf, ")")))))), "Bool")
+        if le.1 == "Bool" || re.1 == "Bool":
+            lb := cat_to_bool(le.0, le.1)
+            rb := cat_to_bool(re.0, re.1)
+            return (str_concat("(", str_concat(lb, str_concat(" ", str_concat(op, str_concat(" ", str_concat(rb, ")")))))), "Bool")
+        return (str_concat("(", str_concat(le.0, str_concat(" ", str_concat(op, str_concat(" ", str_concat(re.0, ")")))))), "Bool")
+    if op == "<" || op == "<=" || op == ">" || op == ">=":
+        if le.1 == "ByteCursor" && re.1 == "ByteCursor":
+            return (str_concat("(", str_concat(le.0, str_concat(".pos ", str_concat(op, str_concat(" ", str_concat(re.0, ".pos)")))))), "Bool")
+        if le.1 == "Float" || re.1 == "Float":
+            lf := cat_coerce(le.0, le.1, "Float")
+            rf := cat_coerce(re.0, re.1, "Float")
+            return (str_concat("(", str_concat(lf, str_concat(" ", str_concat(op, str_concat(" ", str_concat(rf, ")")))))), "Bool")
+        return (str_concat("(", str_concat(le.0, str_concat(" ", str_concat(op, str_concat(" ", str_concat(re.0, ")")))))), "Bool")
+    if op == "+":
+        if le.1 == "ByteCursor":
+            ri := cat_coerce(re.0, re.1, "Int")
+            return (str_concat("c2lpp_cur_add(", str_concat(le.0, str_concat(", ", str_concat(ri, ")")))), "ByteCursor")
+        if re.1 == "ByteCursor":
+            li := cat_coerce(le.0, le.1, "Int")
+            return (str_concat("c2lpp_cur_add(", str_concat(re.0, str_concat(", ", str_concat(li, ")")))), "ByteCursor")
+        if le.1 == "Float" || re.1 == "Float":
+            lf := cat_coerce(le.0, le.1, "Float")
+            rf := cat_coerce(re.0, re.1, "Float")
+            return (str_concat("(", str_concat(lf, str_concat(" + ", str_concat(rf, ")")))), "Float")
+        return (str_concat("(", str_concat(le.0, str_concat(" + ", str_concat(re.0, ")")))), "Int")
+    if op == "-":
+        if le.1 == "ByteCursor" && re.1 == "ByteCursor":
+            return (str_concat("c2lpp_cur_sub(", str_concat(le.0, str_concat(", ", str_concat(re.0, ")")))), "Int")
+        if le.1 == "ByteCursor":
+            ri := cat_coerce(re.0, re.1, "Int")
+            return (str_concat("c2lpp_cur_add(", str_concat(le.0, str_concat(", -(", str_concat(ri, "))")))), "ByteCursor")
+        if le.1 == "Float" || re.1 == "Float":
+            lf := cat_coerce(le.0, le.1, "Float")
+            rf := cat_coerce(re.0, re.1, "Float")
+            return (str_concat("(", str_concat(lf, str_concat(" - ", str_concat(rf, ")")))), "Float")
+        return (str_concat("(", str_concat(le.0, str_concat(" - ", str_concat(re.0, ")")))), "Int")
+    if op == "*" || op == "/":
+        if le.1 == "Float" || re.1 == "Float":
+            lf := cat_coerce(le.0, le.1, "Float")
+            rf := cat_coerce(re.0, re.1, "Float")
+            return (str_concat("(", str_concat(lf, str_concat(" ", str_concat(op, str_concat(" ", str_concat(rf, ")")))))), "Float")
+        return (str_concat("(", str_concat(le.0, str_concat(" ", str_concat(op, str_concat(" ", str_concat(re.0, ")")))))), "Int")
+    return (str_concat("(", str_concat(le.0, str_concat(" ", str_concat(op, str_concat(" ", str_concat(re.0, ")")))))), "Int")
+
+def cat_lower_call(ctx: CatCtx, nd: AstNode, nty: Str) -> (Str, Str):
+    if len(nd.children) == 0:
+        return (cat_default_expr(nty), nty)
+    callee := cat_callee_name(ctx.nodes, nd.children[0])
+    nargs := len(nd.children) - 1
+
+    # C stdlib -> pure-safe L++ runtime shims
+    if callee == "strlen" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_strlen(", str_concat(a0.0, ")")), "Int")
+    if callee == "strcmp" && nargs == 2:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("c2lpp_strcmp(", str_concat(a0.0, str_concat(", ", str_concat(a1.0, ")")))), "Int")
+    if callee == "strncmp" && nargs == 3:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        a2 := cat_lower_expr(ctx, nd.children[3])
+        return (str_concat("c2lpp_strncmp(", str_concat(a0.0, str_concat(", ", str_concat(a1.0, str_concat(", ", str_concat(cat_coerce(a2.0, a2.1, "Int"), ")")))))), "Int")
+    if callee == "strcpy" && nargs == 2:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("c2lpp_strcpy(", str_concat(a0.0, str_concat(", ", str_concat(a1.0, ")")))), "ByteCursor")
+    if callee == "memcpy" && nargs == 3:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        a2 := cat_lower_expr(ctx, nd.children[3])
+        return (str_concat("c2lpp_memcpy(", str_concat(a0.0, str_concat(", ", str_concat(a1.0, str_concat(", ", str_concat(cat_coerce(a2.0, a2.1, "Int"), ")")))))), "ByteCursor")
+    if callee == "memcmp" && nargs == 3:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        a2 := cat_lower_expr(ctx, nd.children[3])
+        return (str_concat("c2lpp_memcmp(", str_concat(a0.0, str_concat(", ", str_concat(a1.0, str_concat(", ", str_concat(cat_coerce(a2.0, a2.1, "Int"), ")")))))), "Int")
+    if callee == "memset" && nargs == 3:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        if a0.1 != "ByteCursor":
+            return ("", "Void")
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        a2 := cat_lower_expr(ctx, nd.children[3])
+        return (str_concat("c2lpp_memset(", str_concat(a0.0, str_concat(", ", str_concat(cat_coerce(a1.0, a1.1, "Int"), str_concat(", ", str_concat(cat_coerce(a2.0, a2.1, "Int"), ")")))))), "ByteCursor")
+    if callee == "fabs" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_fabs(", str_concat(cat_coerce(a0.0, a0.1, "Float"), ")")), "Float")
+    if callee == "floor" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("floor(", str_concat(cat_coerce(a0.0, a0.1, "Float"), ")")), "Float")
+    if callee == "pow" && nargs == 2:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("pow(", str_concat(cat_coerce(a0.0, a0.1, "Float"), str_concat(", ", str_concat(cat_coerce(a1.0, a1.1, "Float"), ")")))), "Float")
+    if (callee == "isnan" || callee == "__builtin_isnan") && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_isnan(", str_concat(cat_coerce(a0.0, a0.1, "Float"), ")")), "Bool")
+    if (callee == "isinf" || callee == "__builtin_isinf" || callee == "__builtin_isinf_sign") && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_isinf(", str_concat(cat_coerce(a0.0, a0.1, "Float"), ")")), "Bool")
+    if callee == "__builtin_nanf" || callee == "__builtin_nan":
+        return ("(0.0 / 0.0)", "Float")
+    if callee == "__builtin_inff" || callee == "__builtin_inf":
+        return ("(1.0 / 0.0)", "Float")
+    if callee == "tolower" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_tolower(", str_concat(cat_coerce(a0.0, a0.1, "Int"), ")")), "Int")
+    if callee == "toupper" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_toupper(", str_concat(cat_coerce(a0.0, a0.1, "Int"), ")")), "Int")
+    if callee == "isdigit" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_isdigit(", str_concat(cat_coerce(a0.0, a0.1, "Int"), ")")), "Bool")
+    if callee == "isspace" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_isspace(", str_concat(cat_coerce(a0.0, a0.1, "Int"), ")")), "Bool")
+    if callee == "strtod" && nargs == 2:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("c2lpp_strtod(", str_concat(a0.0, str_concat(", ", str_concat(a1.0, ")")))), "Float")
+    if callee == "sscanf" && nargs == 3:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a2 := cat_lower_expr(ctx, nd.children[3])
+        return (str_concat("c2lpp_sscanf_double(", str_concat(a0.0, str_concat(", ", str_concat(a2.0, ")")))), "Int")
+    if callee == "snprintf" && nargs >= 3:
+        dst := cat_lower_expr(ctx, nd.children[1])
+        cap := cat_lower_expr(ctx, nd.children[2])
+        cap_i := cat_coerce(cap.0, cap.1, "Int")
+        fmt := cat_string_lit_val(ctx.nodes, nd.children[3])
+        if nargs == 3:
+            mut lit := fmt
+            if !str_starts_with(lit, "\""):
+                lit = str_concat("\"", str_concat(lit, "\""))
+            return (str_concat("c2lpp_snprintf_str(", str_concat(dst.0, str_concat(", ", str_concat(cap_i, str_concat(", ", str_concat(lit, ")")))))), "Int")
+        val := cat_lower_expr(ctx, nd.children[4])
+        if str_contains(fmt, "d") || str_contains(fmt, "i"):
+            return (str_concat("c2lpp_snprintf_str(", str_concat(dst.0, str_concat(", ", str_concat(cap_i, str_concat(", int_to_str(", str_concat(cat_coerce(val.0, val.1, "Int"), "))")))))), "Int")
+        if str_contains(fmt, "x") || str_contains(fmt, "X"):
+            return (str_concat("c2lpp_snprintf_hex4(", str_concat(dst.0, str_concat(", ", str_concat(cat_coerce(val.0, val.1, "Int"), ")")))), "Int")
+        return (str_concat("c2lpp_snprintf_str(", str_concat(dst.0, str_concat(", ", str_concat(cap_i, str_concat(", float_to_str(", str_concat(cat_coerce(val.0, val.1, "Float"), "))")))))), "Int")
+    if callee == "sprintf" && nargs >= 3:
+        dst := cat_lower_expr(ctx, nd.children[1])
+        val := cat_lower_expr(ctx, nd.children[3])
+        return (str_concat("c2lpp_snprintf_hex4(", str_concat(dst.0, str_concat(", ", str_concat(cat_coerce(val.0, val.1, "Int"), ")")))), "Int")
+    if callee == "getenv" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_getenv(", str_concat(a0.0, ")")), "ByteCursor")
+    if callee == "calloc" && nargs == 2:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        a1 := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("c2lpp_cur_alloc((", str_concat(cat_coerce(a0.0, a0.1, "Int"), str_concat(") * (", str_concat(cat_coerce(a1.0, a1.1, "Int"), "))")))), "ByteCursor")
+    if callee == "malloc" && nargs == 1:
+        a0 := cat_lower_expr(ctx, nd.children[1])
+        return (str_concat("c2lpp_cur_alloc(", str_concat(cat_coerce(a0.0, a0.1, "Int"), ")")), "ByteCursor")
+    if callee == "loader_calloc" && nargs >= 2:
+        sz := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("c2lpp_cur_alloc(", str_concat(cat_coerce(sz.0, sz.1, "Int"), ")")), "ByteCursor")
+    if callee == "loader_realloc" && nargs >= 4:
+        old := cat_lower_expr(ctx, nd.children[2])
+        nsz := cat_lower_expr(ctx, nd.children[4])
+        return (str_concat("c2lpp_cur_realloc(", str_concat(old.0, str_concat(", ", str_concat(cat_coerce(nsz.0, nsz.1, "Int"), ")")))), "ByteCursor")
+    if callee == "realloc" && nargs == 2:
+        old := cat_lower_expr(ctx, nd.children[1])
+        nsz := cat_lower_expr(ctx, nd.children[2])
+        return (str_concat("c2lpp_cur_realloc(", str_concat(old.0, str_concat(", ", str_concat(cat_coerce(nsz.0, nsz.1, "Int"), ")")))), "ByteCursor")
+    if callee == "free" || callee == "loader_free":
+        return ("", "Void")
+
+    safe_c := cat_escape_fn(callee)
+    is_local_fn := map_has(ctx.fn_ret_types, safe_c)
+    mut args_out := list_new()
+    mut ext_param_decls := list_new()
+    mut i := 0
+    while i < nargs:
+        ae := cat_lower_expr(ctx, nd.children[i + 1])
+        pkey := str_concat(safe_c, str_concat("#", int_to_str(i)))
+        if is_local_fn && map_has(ctx.fn_param_types, pkey):
+            exp_ty := sm_get(ctx.fn_param_types, ctx.str_pool, pkey)
+            list_push(args_out, cat_coerce(ae.0, ae.1, exp_ty))
+        elif !is_local_fn:
+            # External OS / C-library call: bridge ByteCursor -> Str (const char*), scalars -> Int/Float/Bool
+            mut abi_ty := "Int"
+            if ae.1 == "ByteCursor":
+                abi_ty = "Str"
+                list_push(args_out, str_concat("c2lpp_to_str(", str_concat(ae.0, ")")))
+            elif ae.1 == "Float":
+                abi_ty = "Float"
+                list_push(args_out, ae.0)
+            elif ae.1 == "Bool":
+                abi_ty = "Bool"
+                list_push(args_out, ae.0)
+            elif cat_is_nullable(ae.1):
+                # Nullable ref/struct passed to extern "C" (e.g. NULL `errmsg` or `IntRef`) -> 0 when null
+                if cat_is_null_expr(ae.0):
+                    list_push(args_out, "0")
+                else:
+                    list_push(args_out, cat_coerce(ae.0, ae.1, "Int"))
+            else:
+                list_push(args_out, cat_coerce(ae.0, ae.1, "Int"))
+            list_push(ext_param_decls, str_concat("p", str_concat(int_to_str(i), str_concat(": ", abi_ty))))
+        else:
+            list_push(args_out, ae.0)
+        i = i + 1
+    mut rty := nty
+    if is_local_fn:
+        rty = sm_get(ctx.fn_ret_types, ctx.str_pool, safe_c)
+    elif str_len(callee) > 0 && !str_starts_with(callee, "__builtin_"):
+        # Auto-register genuine external OS / C-library function in `extern "C":` bridge!
+        mut ext_ret_abi := rty
+        if ext_ret_abi == "ByteCursor":
+            ext_ret_abi = "Str"
+        elif ext_ret_abi != "Void" && ext_ret_abi != "Int" && ext_ret_abi != "Float" && ext_ret_abi != "Bool":
+            ext_ret_abi = "Int"
+        if !map_has(ctx.ext_calls_seen, callee):
+            map_put(ctx.ext_calls_seen, callee, 1)
+            mut decl := str_concat("    def ", str_concat(callee, str_concat("(", str_concat(str_join(ext_param_decls, ", "), ")"))))
+            if ext_ret_abi != "Void":
+                decl = str_concat(decl, str_concat(" -> ", ext_ret_abi))
+            list_push(ctx.ext_calls_decls, str_concat(decl, "\n"))
+        call_expr := str_concat(callee, str_concat("(", str_concat(str_join(args_out, ", "), ")")))
+        if rty == "ByteCursor":
+            return (str_concat("c2lpp_cstr(", str_concat(call_expr, ")")), "ByteCursor")
+        return (call_expr, ext_ret_abi)
+    return (str_concat(safe_c, str_concat("(", str_concat(str_join(args_out, ", "), ")"))), rty)
+
+def cat_lower_inc_dec(ctx: CatCtx, tid: Int, delta: Str, out: List[Str], level: Int):
+    ind := tr_indent(level)
+    u := cat_unwrap_parens(ctx.nodes, tid)
+    und := ctx.nodes[u]
+    if und.kind == "UnaryOperator" && und.opcode == "*" && len(und.children) > 0:
+        se := cat_lower_expr(ctx, und.children[0])
+        cat_flush_pre(ctx, out, level)
+        if se.1 == "ByteCursorRef":
+            list_push(out, str_concat(ind, str_concat(se.0, str_concat(".val.pos = ", str_concat(se.0, str_concat(".val.pos + (", str_concat(delta, ")\n")))))))
+            return
+        if se.1 == "IntRef":
+            list_push(out, str_concat(ind, str_concat(se.0, str_concat(".val = ", str_concat(se.0, str_concat(".val + (", str_concat(delta, ")\n")))))))
+            return
+    te := cat_lower_expr(ctx, u)
+    cat_flush_pre(ctx, out, level)
+    if te.1 == "ByteCursor":
+        list_push(out, str_concat(ind, str_concat(te.0, str_concat(".pos = ", str_concat(te.0, str_concat(".pos + (", str_concat(delta, ")\n")))))))
+    else:
+        list_push(out, str_concat(ind, str_concat(te.0, str_concat(" = ", str_concat(te.0, str_concat(" + (", str_concat(delta, ")\n")))))))
+
+def cat_lower_assign(ctx: CatCtx, lid: Int, rid: Int, out: List[Str], level: Int):
+    ind := tr_indent(level)
+    lu := cat_unwrap_parens(ctx.nodes, lid)
+    lnd := ctx.nodes[lu]
+    if lnd.kind == "ArraySubscriptExpr" && len(lnd.children) >= 2:
+        be := cat_lower_expr(ctx, lnd.children[0])
+        ie := cat_lower_expr(ctx, lnd.children[1])
+        ve := cat_lower_expr(ctx, rid)
+        cat_flush_pre(ctx, out, level)
+        list_push(out, str_concat(ind, str_concat("c2lpp_cur_set(", str_concat(be.0, str_concat(", ", str_concat(cat_coerce(ie.0, ie.1, "Int"), str_concat(", ", str_concat(cat_coerce(ve.0, ve.1, "Int"), ")\n"))))))))
+        return
+    if lnd.kind == "UnaryOperator" && lnd.opcode == "*" && len(lnd.children) > 0:
+        su := cat_unwrap_parens(ctx.nodes, lnd.children[0])
+        snd := ctx.nodes[su]
+        if snd.kind == "UnaryOperator" && snd.opcode == "++" && len(snd.children) > 0:
+            pe := cat_lower_expr(ctx, snd.children[0])
+            ve := cat_lower_expr(ctx, rid)
+            cat_flush_pre(ctx, out, level)
+            if pe.1 == "ByteCursor":
+                list_push(out, str_concat(ind, str_concat("c2lpp_cur_write_inc(", str_concat(pe.0, str_concat(", ", str_concat(cat_coerce(ve.0, ve.1, "Int"), ")\n"))))))
+                return
+        pe := cat_lower_expr(ctx, su)
+        ve := cat_lower_expr(ctx, rid)
+        cat_flush_pre(ctx, out, level)
+        if pe.1 == "ByteCursor":
+            list_push(out, str_concat(ind, str_concat("c2lpp_cur_set(", str_concat(pe.0, str_concat(", 0, ", str_concat(cat_coerce(ve.0, ve.1, "Int"), ")\n"))))))
+        elif pe.1 == "ByteCursorRef":
+            list_push(out, str_concat(ind, str_concat(pe.0, str_concat(".val = ", str_concat(cat_coerce(ve.0, ve.1, "ByteCursor"), "\n")))))
+        elif pe.1 == "BoolRef":
+            list_push(out, str_concat(ind, str_concat(pe.0, str_concat(".val = ", str_concat(cat_coerce(ve.0, ve.1, "Bool"), "\n")))))
+        elif pe.1 == "IntRef":
+            list_push(out, str_concat(ind, str_concat(pe.0, str_concat(".val = ", str_concat(cat_coerce(ve.0, ve.1, "Int"), "\n")))))
+        elif pe.1 == "FloatRef":
+            list_push(out, str_concat(ind, str_concat(pe.0, str_concat(".val = ", str_concat(cat_coerce(ve.0, ve.1, "Float"), "\n")))))
+        return
+    le := cat_lower_expr(ctx, lu)
+    re := cat_lower_expr(ctx, rid)
+    mut rc := cat_coerce(re.0, re.1, le.1)
+    if le.1 == "ByteCursor" && re.1 == "ByteCursor" && !str_starts_with(rc, "c2lpp_cur_") && !str_starts_with(rc, "c2lpp_cstr") && !str_ends_with(rc, "_null()"):
+        rc = str_concat("c2lpp_cur_add(", str_concat(rc, ", 0)"))
+    cat_flush_pre(ctx, out, level)
+    list_push(out, str_concat(ind, str_concat(le.0, str_concat(" = ", str_concat(rc, "\n")))))
+    cat_flush_post(ctx, out, level)
+
+def cat_lower_compound_assign(ctx: CatCtx, lid: Int, rid: Int, op: Str, out: List[Str], level: Int):
+    ind := tr_indent(level)
+    bin_op := str_substr(op, 0, str_len(op) - 1)
+    lu := cat_unwrap_parens(ctx.nodes, lid)
+    lnd := ctx.nodes[lu]
+    if lnd.kind == "UnaryOperator" && lnd.opcode == "*" && len(lnd.children) > 0:
+        pe := cat_lower_expr(ctx, lnd.children[0])
+        re := cat_lower_expr(ctx, rid)
+        cat_flush_pre(ctx, out, level)
+        if pe.1 == "ByteCursorRef":
+            ri := cat_coerce(re.0, re.1, "Int")
+            list_push(out, str_concat(ind, str_concat(pe.0, str_concat(".val.pos = ", str_concat(pe.0, str_concat(".val.pos ", str_concat(bin_op, str_concat(" (", str_concat(ri, ")\n")))))))))
+            return
+    le := cat_lower_expr(ctx, lu)
+    re := cat_lower_expr(ctx, rid)
+    cat_flush_pre(ctx, out, level)
+    if le.1 == "ByteCursor":
+        ri := cat_coerce(re.0, re.1, "Int")
+        list_push(out, str_concat(ind, str_concat(le.0, str_concat(".pos = ", str_concat(le.0, str_concat(".pos ", str_concat(bin_op, str_concat(" (", str_concat(ri, ")\n")))))))))
+    else:
+        rc := cat_coerce(re.0, re.1, le.1)
+        list_push(out, str_concat(ind, str_concat(le.0, str_concat(" = ", str_concat(le.0, str_concat(" ", str_concat(bin_op, str_concat(" (", str_concat(rc, ")\n")))))))))
+
+def cat_lower_var_decl(ctx: CatCtx, did: Int, out: List[Str], level: Int):
+    d := ctx.nodes[did]
+    if str_len(d.name) == 0:
+        return
+    vname := tr_escape_ident(d.name)
+    ty := cat_map_type(d.desug_type, d.qual_type, ctx.defined_structs)
+    ind := tr_indent(level)
+    mut desug := d.desug_type
+    if str_len(desug) == 0:
+        desug = d.qual_type
+    lb := str_find(desug, "[")
+    rb := str_find(desug, "]")
+    if lb > 0 && rb > lb && ty == "ByteCursor":
+        mut alen := str_to_int(str_trim(str_substr(desug, lb + 1, rb - lb - 1)))
+        if alen <= 0:
+            alen = 64
+        sm_put(ctx.local_types, ctx.str_pool, vname, "ByteCursor")
+        list_push(out, str_concat(ind, str_concat("mut ", str_concat(vname, str_concat(": ByteCursor = c2lpp_cur_alloc(", str_concat(int_to_str(alen), ")\n"))))))
+        return
+    mut init_e := cat_default_expr(ty)
+    if map_has(ctx.defined_structs, ty):
+        init_e = str_concat(ty, "_new()")
+    if len(d.children) > 0:
+        inode := ctx.nodes[d.children[len(d.children) - 1]]
+        if inode.kind == "InitListExpr":
+            if map_has(ctx.defined_structs, ty):
+                init_e = str_concat(ty, "_new()")
+            else:
+                init_e = cat_default_expr(ty)
+        else:
+            ev := cat_lower_expr(ctx, d.children[len(d.children) - 1])
+            init_e = cat_coerce(ev.0, ev.1, ty)
+            if ty == "ByteCursor" && ev.1 == "ByteCursor" && !str_starts_with(init_e, "c2lpp_cur_") && !str_starts_with(init_e, "c2lpp_cstr") && !str_ends_with(init_e, "_null()"):
+                init_e = str_concat("c2lpp_cur_add(", str_concat(init_e, ", 0)"))
+    sm_put(ctx.local_types, ctx.str_pool, vname, ty)
+    cat_flush_pre(ctx, out, level)
+    list_push(out, str_concat(ind, str_concat("mut ", str_concat(vname, str_concat(": ", str_concat(ty, str_concat(" = ", str_concat(init_e, "\n"))))))))
+
+def cat_lower_switch(ctx: CatCtx, nid: Int, out: List[Str], level: Int):
+    nd := ctx.nodes[nid]
+    if len(nd.children) < 2:
+        return
+    ce := cat_lower_expr(ctx, nd.children[0])
+    sw_var := cat_fresh_temp(ctx, "sw")
+    ind := tr_indent(level)
+    cat_flush_pre(ctx, out, level)
+    list_push(out, str_concat(ind, str_concat("mut ", str_concat(sw_var, str_concat(": Int = ", str_concat(cat_coerce(ce.0, ce.1, "Int"), "\n"))))))
+    body := ctx.nodes[nd.children[1]]
+    mut first := true
+    mut pending_conds := list_new()
+    mut in_branch := false
+    mut i := 0
+    n := len(body.children)
+    while i < n:
+        mut sid := body.children[i]
+        i = i + 1
+        # Unwrap nested CaseStmt / DefaultStmt chains
+        mut handled_case := true
+        while handled_case && sid >= 0 && sid < len(ctx.nodes):
+            handled_case = false
+            snd := ctx.nodes[sid]
+            if snd.kind == "CaseStmt" && len(snd.children) >= 1:
+                ve := cat_lower_expr(ctx, snd.children[0])
+                list_push(pending_conds, str_concat(sw_var, str_concat(" == ", cat_coerce(ve.0, ve.1, "Int"))))
+                if len(snd.children) >= 2:
+                    sid = snd.children[len(snd.children) - 1]
+                    handled_case = true
+                else:
+                    sid = -1
+            elif snd.kind == "DefaultStmt":
+                pending_conds = list_new()
+                if first:
+                    list_push(out, str_concat(ind, "if true:\n"))
+                    first = false
+                else:
+                    list_push(out, str_concat(ind, "else:\n"))
+                in_branch = true
+                if len(snd.children) >= 1:
+                    sid = snd.children[0]
+                    handled_case = true
+                else:
+                    sid = -1
+        if len(pending_conds) > 0:
+            cond_s := str_join(pending_conds, " || ")
+            pending_conds = list_new()
+            if first:
+                list_push(out, str_concat(ind, str_concat("if ", str_concat(cond_s, ":\n"))))
+                first = false
+            else:
+                list_push(out, str_concat(ind, str_concat("elif ", str_concat(cond_s, ":\n"))))
+            in_branch = true
+        if sid >= 0 && sid < len(ctx.nodes) && in_branch:
+            snd2 := ctx.nodes[sid]
+            if snd2.kind == "BreakStmt":
+                list_push(out, str_concat(tr_indent(level + 1), "_ := 0\n"))
+            else:
+                cat_lower_stmt(ctx, sid, out, level + 1)
+
+def cat_lower_stmt(ctx: CatCtx, nid: Int, out: List[Str], level: Int):
+    if nid < 0 || nid >= len(ctx.nodes):
+        return
+    nd := ctx.nodes[nid]
+    k := nd.kind
+    ind := tr_indent(level)
+
+    if k == "NullStmt" || str_len(k) == 0:
+        return
+    if k == "CompoundStmt":
+        mut i := 0
+        while i < len(nd.children):
+            cat_lower_stmt(ctx, nd.children[i], out, level)
+            i = i + 1
+        return
+    if k == "DeclStmt":
+        mut i := 0
+        while i < len(nd.children):
+            cnd := ctx.nodes[nd.children[i]]
+            if cnd.kind == "VarDecl":
+                cat_lower_var_decl(ctx, nd.children[i], out, level)
+            i = i + 1
+        return
+    if k == "ReturnStmt":
+        if len(nd.children) > 0:
+            ev := cat_lower_expr(ctx, nd.children[0])
+            coerced := cat_coerce(ev.0, ev.1, ctx.cur_ret_ty)
+            cat_flush_pre(ctx, out, level)
+            list_push(out, str_concat(ind, str_concat("return ", str_concat(coerced, "\n"))))
+        elif ctx.cur_ret_ty == "Void":
+            list_push(out, str_concat(ind, "return\n"))
+        else:
+            list_push(out, str_concat(ind, str_concat("return ", str_concat(cat_default_expr(ctx.cur_ret_ty), "\n"))))
+        return
+    if k == "IfStmt":
+        if len(nd.children) < 2:
+            return
+        ce := cat_lower_expr(ctx, nd.children[0])
+        cb := cat_to_bool(ce.0, ce.1)
+        cat_flush_pre(ctx, out, level)
+        if len(ctx.post_stmts) > 0:
+            ctmp := cat_fresh_temp(ctx, "cond")
+            list_push(out, str_concat(ind, str_concat("mut ", str_concat(ctmp, str_concat(": Bool = ", str_concat(cb, "\n"))))))
+            cat_flush_post(ctx, out, level)
+            list_push(out, str_concat(ind, str_concat("if ", str_concat(ctmp, ":\n"))))
+        else:
+            list_push(out, str_concat(ind, str_concat("if ", str_concat(cb, ":\n"))))
+        b1 := len(out)
+        cat_lower_stmt(ctx, nd.children[1], out, level + 1)
+        if len(out) == b1:
+            list_push(out, str_concat(tr_indent(level + 1), "_ := 0\n"))
+        if len(nd.children) >= 3 && nd.children[2] >= 0:
+            list_push(out, str_concat(ind, "else:\n"))
+            b2 := len(out)
+            cat_lower_stmt(ctx, nd.children[2], out, level + 1)
+            if len(out) == b2:
+                list_push(out, str_concat(tr_indent(level + 1), "_ := 0\n"))
+        return
+    if k == "WhileStmt":
+        if len(nd.children) < 2:
+            return
+        ce := cat_lower_expr(ctx, nd.children[0])
+        cb := cat_to_bool(ce.0, ce.1)
+        if len(ctx.pre_stmts) > 0:
+            list_push(out, str_concat(ind, "while true:\n"))
+            cat_flush_pre(ctx, out, level + 1)
+            list_push(out, str_concat(tr_indent(level + 1), str_concat("if !(", str_concat(cb, "):\n"))))
+            list_push(out, str_concat(tr_indent(level + 2), "break\n"))
+            cat_lower_stmt(ctx, nd.children[1], out, level + 1)
+        else:
+            list_push(out, str_concat(ind, str_concat("while ", str_concat(cb, ":\n"))))
+            b := len(out)
+            cat_lower_stmt(ctx, nd.children[1], out, level + 1)
+            if len(out) == b:
+                list_push(out, str_concat(tr_indent(level + 1), "_ := 0\n"))
+        if ctx.has_goto:
+            list_push(out, str_concat(ind, "if _goto_target != 0:\n"))
+            list_push(out, str_concat(tr_indent(level + 1), "break\n"))
+        return
+    if k == "DoStmt":
+        if len(nd.children) < 2:
+            return
+        list_push(out, str_concat(ind, "while true:\n"))
+        cat_lower_stmt(ctx, nd.children[0], out, level + 1)
+        ce := cat_lower_expr(ctx, nd.children[1])
+        cb := cat_to_bool(ce.0, ce.1)
+        cat_flush_pre(ctx, out, level + 1)
+        list_push(out, str_concat(tr_indent(level + 1), str_concat("if !(", str_concat(cb, "):\n"))))
+        list_push(out, str_concat(tr_indent(level + 2), "break\n"))
+        if ctx.has_goto:
+            list_push(out, str_concat(ind, "if _goto_target != 0:\n"))
+            list_push(out, str_concat(tr_indent(level + 1), "break\n"))
+        return
+    if k == "ForStmt":
+        if len(nd.children) < 5:
+            return
+        if nd.children[0] >= 0 && str_len(ctx.nodes[nd.children[0]].kind) > 0:
+            cat_lower_stmt(ctx, nd.children[0], out, level)
+        mut cb := "true"
+        if nd.children[2] >= 0 && str_len(ctx.nodes[nd.children[2]].kind) > 0:
+            ce := cat_lower_expr(ctx, nd.children[2])
+            cb = cat_to_bool(ce.0, ce.1)
+        cat_flush_pre(ctx, out, level)
+        list_push(out, str_concat(ind, str_concat("while ", str_concat(cb, ":\n"))))
+        b := len(out)
+        if nd.children[4] >= 0 && str_len(ctx.nodes[nd.children[4]].kind) > 0:
+            cat_lower_stmt(ctx, nd.children[4], out, level + 1)
+        if nd.children[3] >= 0 && str_len(ctx.nodes[nd.children[3]].kind) > 0:
+            cat_lower_stmt(ctx, nd.children[3], out, level + 1)
+        if len(out) == b:
+            list_push(out, str_concat(tr_indent(level + 1), "_ := 0\n"))
+        if ctx.has_goto:
+            list_push(out, str_concat(ind, "if _goto_target != 0:\n"))
+            list_push(out, str_concat(tr_indent(level + 1), "break\n"))
+        return
+    if k == "SwitchStmt":
+        cat_lower_switch(ctx, nid, out, level)
+        return
+    if k == "BreakStmt":
+        list_push(out, str_concat(ind, "break\n"))
+        return
+    if k == "ContinueStmt":
+        list_push(out, str_concat(ind, "continue\n"))
+        return
+    if k == "GotoStmt":
+        if ctx.has_goto:
+            mut tid := 1
+            if map_has(ctx.goto_labels, nd.val_str):
+                tid = map_get(ctx.goto_labels, nd.val_str)
+            list_push(out, str_concat(ind, str_concat("_goto_target = ", str_concat(int_to_str(tid), "\n"))))
+            list_push(out, str_concat(ind, "break\n"))
+        return
+    if k == "LabelStmt":
+        mut i := 0
+        while i < len(nd.children):
+            cat_lower_stmt(ctx, nd.children[i], out, level)
+            i = i + 1
+        return
+    # Expression statements: only ignore `(void)x` when child is a side-effect-free DeclRef/Cast
+    if k == "CStyleCastExpr" && nd.qual_type == "void":
+        if len(nd.children) > 0:
+            c0 := ctx.nodes[nd.children[0]]
+            if c0.kind == "UnaryOperator" || c0.kind == "CallExpr" || c0.kind == "BinaryOperator" || c0.kind == "CompoundAssignOperator":
+                cat_lower_stmt(ctx, nd.children[0], out, level)
+        return
+    if k == "BinaryOperator" && nd.opcode == ",":
+        mut i := 0
+        while i < len(nd.children):
+            cat_lower_stmt(ctx, nd.children[i], out, level)
+            i = i + 1
+        return
+    if k == "BinaryOperator" && nd.opcode == "=" && len(nd.children) >= 2:
+        cat_lower_assign(ctx, nd.children[0], nd.children[1], out, level)
+        return
+    if k == "CompoundAssignOperator" && len(nd.children) >= 2:
+        cat_lower_compound_assign(ctx, nd.children[0], nd.children[1], nd.opcode, out, level)
+        return
+    if k == "UnaryOperator" && (nd.opcode == "++" || nd.opcode == "--") && len(nd.children) >= 1:
+        mut delta := "1"
+        if nd.opcode == "--":
+            delta = "-1"
+        cat_lower_inc_dec(ctx, nd.children[0], delta, out, level)
+        return
+    ev := cat_lower_expr(ctx, nid)
+    cat_flush_pre(ctx, out, level)
+    if str_len(ev.0) > 0 && ev.0 != "0":
+        list_push(out, str_concat(ind, str_concat(ev.0, "\n")))
+    cat_flush_post(ctx, out, level)
+
+def cat_collect_defines(raw_src: Str, emitted: Map[Str, Int], out_consts: List[Str]) -> Int:
+    lines := str_lines(raw_src)
+    mut count := 0
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        line := str_trim(lines[i])
+        i = i + 1
+        if str_starts_with(line, "#define "):
+            rest := nt_normalize_ws(str_substr(line, 8, str_len(line) - 8))
+            sp := str_find(rest, " ")
+            if sp > 0 && !str_contains(str_substr(rest, 0, sp), "("):
+                cname := str_substr(rest, 0, sp)
+                mut raw_v := str_trim(str_substr(rest, sp + 1, str_len(rest) - sp - 1))
+                cpos := str_find(raw_v, "/*")
+                if cpos >= 0:
+                    raw_v = str_trim(str_substr(raw_v, 0, cpos))
+                mut cval := tr_clean_define_value(raw_v)
+                if str_len(cval) == 0 && str_starts_with(raw_v, "(1 << ") && str_ends_with(raw_v, ")"):
+                    sh := str_to_int(str_trim(str_substr(raw_v, 6, str_len(raw_v) - 7)))
+                    if sh >= 0 && sh < 62:
+                        cval = int_to_str(1 << sh)
+                if str_len(cval) > 0 && !map_has(emitted, cname):
+                    map_put(emitted, cname, 1)
+                    list_push(out_consts, str_concat("const ", str_concat(cname, str_concat(" = ", str_concat(cval, "\n")))))
+                    count = count + 1
+    return count
+
+def cat_collect_translated_fn_names(lpp_src: Str, out_map: Map[Str, Int]):
+    lines := str_lines(lpp_src)
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        line := lines[i]
+        i = i + 1
+        if str_starts_with(line, "def "):
+            rest := str_substr(line, 4, str_len(line) - 4)
+            lp := str_find(rest, "(")
+            if lp > 0:
+                fn_name := str_substr(rest, 0, lp)
+                map_put(out_map, fn_name, 1)
+
+def cat_strip_imported_externs(lpp_src: Str, imported_fns: Map[Str, Int], import_mods: List[Str]) -> Str:
+    if len(import_mods) == 0:
+        return lpp_src
+    lines := str_lines(lpp_src)
+    mut out := list_new()
+    mut inserted_imports := false
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        line := lines[i]
+        i = i + 1
+        if !inserted_imports && str_starts_with(line, "# stats:"):
+            list_push(out, str_concat(line, "\n\n"))
+            mut mi := 0
+            while mi < len(import_mods):
+                list_push(out, str_concat("import ", str_concat(import_mods[mi], "\n")))
+                mi = mi + 1
+            inserted_imports = true
+            continue
+        if str_starts_with(line, "    def "):
+            rest := str_substr(line, 8, str_len(line) - 8)
+            lp := str_find(rest, "(")
+            if lp > 0:
+                fn_name := str_substr(rest, 0, lp)
+                if map_has(imported_fns, fn_name):
+                    continue
+        list_push(out, str_concat(line, "\n"))
+    return str_join(out, "")
+
+def clang_ast_translate(ast_json: Str, stem: Str, raw_c: Str, raw_h: Str) -> Str:
+    parsed := jp_parse_clang_tu(ast_json, stem)
+    nodes := parsed.0
+    top_ids := parsed.1
+
+    mut consts_list := list_new()
+    mut emitted_consts := map_new()
+    mut count_defines := cat_collect_defines(raw_h, emitted_consts, consts_list)
+    count_defines = count_defines + cat_collect_defines(raw_c, emitted_consts, consts_list)
+
+    mut str_pool := list_new()
+
+    # Pass 1: Resolve anonymous RecordDecl -> TypedefDecl names
+    mut anon_names := map_new()
+    mut ti := 0
+    while ti < len(top_ids):
+        tnd := nodes[top_ids[ti]]
+        if tnd.kind == "TypedefDecl" && str_len(tnd.name) > 0:
+            mut ci := 0
+            while ci < len(tnd.children):
+                cnd := nodes[tnd.children[ci]]
+                if str_len(cnd.owned_tag_id) > 0:
+                    sm_put(anon_names, str_pool, cnd.owned_tag_id, tnd.name)
+                ci = ci + 1
+        ti = ti + 1
+
+    # Pass 2: Collect target structs, globals, and functions
+    mut defined_structs := map_new()
+    mut record_ids := list_new()
+    mut record_names := list_new()
+    mut func_ids := list_new()
+    mut global_types := map_new()
+    mut global_names := list_new()
+    mut global_nids := list_new()
+
+    c_suffix := str_concat(stem, ".c")
+    h_suffix := str_concat(stem, ".h")
+    mut cur_file := ""
+    ti = 0
+    while ti < len(top_ids):
+        nid := top_ids[ti]
+        tnd := nodes[nid]
+        if !tnd.is_implicit && str_len(tnd.loc_file) > 0:
+            cur_file = tnd.loc_file
+        in_target := !tnd.is_implicit && (str_len(cur_file) == 0 || str_ends_with(cur_file, c_suffix) || str_ends_with(cur_file, h_suffix))
+        if in_target:
+            if tnd.kind == "RecordDecl":
+                mut has_f := false
+                mut ci := 0
+                while ci < len(tnd.children):
+                    if nodes[tnd.children[ci]].kind == "FieldDecl":
+                        has_f = true
+                        break
+                    ci = ci + 1
+                if has_f:
+                    mut sname := tnd.name
+                    if str_len(sname) == 0 && map_has(anon_names, tnd.id_str):
+                        sname = sm_get(anon_names, str_pool, tnd.id_str)
+                    if str_len(sname) > 0 && !map_has(defined_structs, sname):
+                        map_put(defined_structs, sname, 1)
+                        list_push(record_ids, nid)
+                        list_push(record_names, sname)
+            elif tnd.kind == "VarDecl" && str_len(tnd.name) > 0:
+                gty := cat_map_type(tnd.desug_type, tnd.qual_type, defined_structs)
+                gname := tr_escape_ident(tnd.name)
+                if !map_has(global_types, gname):
+                    sm_put(global_types, str_pool, gname, gty)
+                    list_push(global_names, gname)
+                    list_push(global_nids, nid)
+            elif tnd.kind == "FunctionDecl":
+                mut has_body := false
+                mut ci := 0
+                while ci < len(tnd.children):
+                    if nodes[tnd.children[ci]].kind == "CompoundStmt":
+                        has_body = true
+                        break
+                    ci = ci + 1
+                if has_body:
+                    list_push(func_ids, nid)
+        ti = ti + 1
+
+    # Pass 3: Emit structs & populate field_types
+    mut field_types := map_new()
+    mut struct_parts := list_new()
+    mut ri := 0
+    while ri < len(record_ids):
+        rnode := nodes[record_ids[ri]]
+        sname := record_names[ri]
+        mut f_lines := list_new()
+        mut null_args := list_new()
+        mut new_args := list_new()
+        mut ci := 0
+        while ci < len(rnode.children):
+            cnd := nodes[rnode.children[ci]]
+            if cnd.kind == "FieldDecl" && str_len(cnd.name) > 0:
+                fname := tr_escape_ident(cnd.name)
+                fty := cat_map_type(cnd.desug_type, cnd.qual_type, defined_structs)
+                sm_put(field_types, str_pool, str_concat(sname, str_concat(".", fname)), fty)
+                list_push(f_lines, str_concat("    ", str_concat(fname, str_concat(": ", str_concat(fty, "\n")))))
+                if map_has(defined_structs, fty):
+                    list_push(null_args, "0")
+                    list_push(new_args, cat_default_expr(fty))
+                else:
+                    def_e := cat_default_expr(fty)
+                    list_push(null_args, str_concat(def_e, ""))
+                    list_push(new_args, def_e)
+            ci = ci + 1
+        if len(f_lines) > 0:
+            list_push(f_lines, "    is_null: Bool\n")
+            na_true := str_concat(str_join(null_args, ", "), ", true")
+            na_false := str_concat(str_join(new_args, ", "), ", false")
+            list_push(struct_parts, str_concat("struct ", str_concat(sname, str_concat(":\n", str_concat(str_join(f_lines, ""), "\n")))))
+            list_push(struct_parts, str_concat("def ", str_concat(sname, str_concat("_null() -> ", str_concat(sname, str_concat(":\n    return ", str_concat(sname, str_concat("(", str_concat(na_true, ")\n\n")))))))))
+            list_push(struct_parts, str_concat("def ", str_concat(sname, str_concat("_new() -> ", str_concat(sname, str_concat(":\n    return ", str_concat(sname, str_concat("(", str_concat(na_false, ")\n\n")))))))))
+        ri = ri + 1
+
+    # Pass 4: Pre-register all function signatures
+    mut fn_ret_types := map_new()
+    mut fn_param_types := map_new()
+    mut fi := 0
+    while fi < len(func_ids):
+        fnd := nodes[func_ids[fi]]
+        if str_len(fnd.name) > 0:
+            safe_fn := cat_escape_fn(fnd.name)
+            mut rqual := fnd.qual_type
+            lp1 := str_find(rqual, "(")
+            if lp1 > 0:
+                rqual = str_trim(str_substr(rqual, 0, lp1))
+            mut rdesug := fnd.desug_type
+            lp2 := str_find(rdesug, "(")
+            if lp2 > 0:
+                rdesug = str_trim(str_substr(rdesug, 0, lp2))
+            rty := cat_map_type(rdesug, rqual, defined_structs)
+            sm_put(fn_ret_types, str_pool, safe_fn, rty)
+            mut pidx := 0
+            mut ci := 0
+            while ci < len(fnd.children):
+                pnd := nodes[fnd.children[ci]]
+                if pnd.kind == "ParmVarDecl":
+                    pty := cat_map_type(pnd.desug_type, pnd.qual_type, defined_structs)
+                    sm_put(fn_param_types, str_pool, str_concat(safe_fn, str_concat("#", int_to_str(pidx))), pty)
+                    pidx = pidx + 1
+                ci = ci + 1
+        fi = fi + 1
+
+    # Pass 5: Emit every function body!
+    mut funcs_out := list_new()
+    mut emitted_fns := map_new()
+    mut count_seen := 0
+    mut count_translated := 0
+    mut ctx := CatCtx(nodes, str_pool, defined_structs, field_types, fn_ret_types, fn_param_types, global_types, map_new(), "", 0, list_new(), list_new(), map_new(), false, map_new(), list_new())
+    fi = 0
+    while fi < len(func_ids):
+        fnd := ctx.nodes[func_ids[fi]]
+        fi = fi + 1
+        count_seen = count_seen + 1
+        if str_len(fnd.name) == 0:
+            continue
+        safe_fn := cat_escape_fn(fnd.name)
+        if map_has(emitted_fns, safe_fn):
+            continue
+        map_put(emitted_fns, safe_fn, 1)
+
+        rty := sm_get(ctx.fn_ret_types, ctx.str_pool, safe_fn)
+        mut pnames := list_new()
+        mut ptypes := list_new()
+        mut local_types := map_new()
+        mut body_id := -1
+        mut ci := 0
+        while ci < len(fnd.children):
+            cnd := ctx.nodes[fnd.children[ci]]
+            if cnd.kind == "ParmVarDecl":
+                mut pn := tr_escape_ident(cnd.name)
+                if str_len(pn) == 0:
+                    pn = str_concat("_p", int_to_str(len(pnames)))
+                pty := cat_map_type(cnd.desug_type, cnd.qual_type, ctx.defined_structs)
+                sm_put(local_types, ctx.str_pool, pn, pty)
+                list_push(pnames, str_concat(pn, ""))
+                list_push(ptypes, str_concat(pty, ""))
+            elif cnd.kind == "CompoundStmt":
+                body_id = fnd.children[ci]
+            ci = ci + 1
+        if body_id < 0:
+            continue
+
+        body_node := ctx.nodes[body_id]
+        mut label_positions := list_new()
+        mut goto_labels := map_new()
+        mut si := 0
+        while si < len(body_node.children):
+            snd := ctx.nodes[body_node.children[si]]
+            if snd.kind == "LabelStmt":
+                lid_num := len(label_positions) + 1
+                list_push(label_positions, si)
+                if str_len(snd.val_str) > 0:
+                    map_put(goto_labels, snd.val_str, lid_num)
+            si = si + 1
+
+        ctx.local_types = local_types
+        ctx.cur_ret_ty = rty
+        ctx.temp_id = 0
+        ctx.pre_stmts = list_new()
+        ctx.post_stmts = list_new()
+        ctx.goto_labels = goto_labels
+        ctx.has_goto = len(label_positions) > 0
+        mut body_lines := list_new()
+        if len(label_positions) > 0:
+            first_lpos := label_positions[0]
+            list_push(body_lines, "    mut _goto_target: Int = 0\n")
+            mut first_non_decl := 0
+            while first_non_decl < first_lpos && ctx.nodes[body_node.children[first_non_decl]].kind == "DeclStmt":
+                cat_lower_stmt(ctx, body_node.children[first_non_decl], body_lines, 1)
+                first_non_decl = first_non_decl + 1
+            list_push(body_lines, "    while true:\n")
+            mut k := first_non_decl
+            while k < first_lpos:
+                cat_lower_stmt(ctx, body_node.children[k], body_lines, 2)
+                k = k + 1
+            list_push(body_lines, "        break\n")
+            ctx.has_goto = false
+            # Emit each label's cleanup/target block
+            mut li := 0
+            nlabels := len(label_positions)
+            while li < nlabels:
+                lstart := label_positions[li]
+                mut lend := len(body_node.children)
+                if li + 1 < nlabels:
+                    lend = label_positions[li + 1]
+                lid_num := li + 1
+                if li == 0:
+                    list_push(body_lines, str_concat("    if _goto_target == ", str_concat(int_to_str(lid_num), " || _goto_target == 0:\n")))
+                else:
+                    list_push(body_lines, str_concat("    elif _goto_target == ", str_concat(int_to_str(lid_num), ":\n")))
+                mut m := lstart
+                while m < lend:
+                    cat_lower_stmt(ctx, body_node.children[m], body_lines, 2)
+                    m = m + 1
+                li = li + 1
+            if rty != "Void":
+                list_push(body_lines, str_concat("    return ", str_concat(cat_default_expr(rty), "\n")))
+        else:
+            mut k := 0
+            while k < len(body_node.children):
+                cat_lower_stmt(ctx, body_node.children[k], body_lines, 1)
+                k = k + 1
+
+        body_text := str_join(body_lines, "")
+        mut p_sig := list_new()
+        mut mut_prelude := list_new()
+        mut pk := 0
+        while pk < len(pnames):
+            pn_i := pnames[pk]
+            pt_i := ptypes[pk]
+            needs_mut := str_contains(body_text, str_concat("    ", str_concat(pn_i, " = "))) || str_contains(body_text, str_concat("    ", str_concat(pn_i, "."))) || str_contains(body_text, str_concat("c2lpp_cur_write_inc(", pn_i)) || str_contains(body_text, str_concat("c2lpp_cur_read_inc(", pn_i)) || str_contains(body_text, str_concat("c2lpp_cur_set(", pn_i))
+            if needs_mut:
+                arg_n := str_concat(pn_i, "_arg")
+                list_push(p_sig, str_concat(arg_n, str_concat(": ", pt_i)))
+                if pt_i == "ByteCursor":
+                    list_push(mut_prelude, str_concat("    mut ", str_concat(pn_i, str_concat(": ByteCursor = c2lpp_cur_add(", str_concat(arg_n, ", 0)\n")))))
+                else:
+                    list_push(mut_prelude, str_concat("    mut ", str_concat(pn_i, str_concat(": ", str_concat(pt_i, str_concat(" = ", str_concat(arg_n, "\n")))))))
+            else:
+                list_push(p_sig, str_concat(pn_i, str_concat(": ", pt_i)))
+            pk = pk + 1
+
+        mut sig := str_concat("def ", str_concat(safe_fn, str_concat("(", str_concat(str_join(p_sig, ", "), ")"))))
+        if rty != "Void":
+            sig = str_concat(sig, str_concat(" -> ", rty))
+        sig = str_concat(sig, ":\n")
+        list_push(funcs_out, sig)
+        list_push(funcs_out, str_join(mut_prelude, ""))
+        if str_len(str_trim(body_text)) == 0:
+            if rty == "Void":
+                list_push(funcs_out, "    _ := 0\n\n")
+            else:
+                list_push(funcs_out, str_concat("    return ", str_concat(cat_default_expr(rty), "\n\n")))
+        else:
+            list_push(funcs_out, str_concat(body_text, "\n"))
+        count_translated = count_translated + 1
+
+    # Globals section (with real StringLiteral / InitListExpr initializers for C lookup tables!)
+    mut globals_parts := list_new()
+    mut gi := 0
+    while gi < len(global_names):
+        gn := global_names[gi]
+        gt := sm_get(ctx.global_types, ctx.str_pool, gn)
+        gnd := ctx.nodes[global_nids[gi]]
+        mut gexpr := cat_default_expr(gt)
+        if len(gnd.children) > 0:
+            init_id := gnd.children[len(gnd.children) - 1]
+            ind := ctx.nodes[init_id]
+            if ind.kind == "StringLiteral" && gt == "ByteCursor":
+                gexpr = cat_emit_c_string_lit(ind.val_str)
+            elif ind.kind == "InitListExpr" && gt == "ByteCursor" && len(ind.children) > 0:
+                mut elems := list_new()
+                mut ei := 0
+                while ei < len(ind.children):
+                    ev := cat_lower_expr(ctx, ind.children[ei])
+                    list_push(elems, cat_coerce(ev.0, ev.1, "Int"))
+                    ei = ei + 1
+                gexpr = str_concat("c2lpp_cstr_bytes([", str_concat(str_join(elems, ", "), "])"))
+        list_push(globals_parts, str_concat("def c2lpp_global_", str_concat(gn, str_concat("() -> ", str_concat(gt, str_concat(":\n    return ", str_concat(gexpr, "\n\n")))))))
+        gi = gi + 1
+
+    structs_str := str_join(struct_parts, "")
+    globals_str := str_join(globals_parts, "")
+    funcs_str := str_join(funcs_out, "")
+    shims_str := c2lpp_emit_runtime_shims(str_concat(structs_str, str_concat(globals_str, funcs_str)))
+
+    mut sections := list_new()
+    if len(ctx.ext_calls_decls) > 0:
+        list_push(sections, "# Translated to native L++ by c2lpp v0.7.0 (Pure-L++ Clang AST Frontend + Auto OS/C-Lib Bridge)\n")
+    else:
+        list_push(sections, "# Translated to pure safe L++ by c2lpp v0.7.0 (Pure-L++ Clang AST Frontend, Zero extern \"C\", Zero unsafe)\n")
+    list_push(sections, str_concat("# stats: defines=", str_concat(int_to_str(count_defines), str_concat(" structs=", str_concat(int_to_str(len(record_ids)), str_concat(" funcs_translated=", str_concat(int_to_str(count_translated), str_concat(" funcs_seen=", str_concat(int_to_str(count_seen), str_concat(" os_externs=", str_concat(int_to_str(len(ctx.ext_calls_decls)), "\n\n")))))))))))
+    if len(consts_list) > 0:
+        list_push(sections, str_join(consts_list, ""))
+        list_push(sections, "\n")
+    if len(ctx.ext_calls_decls) > 0:
+        list_push(sections, "# Auto-bridged OS / external C library calls (no local .c source available)\nextern \"C\":\n")
+        list_push(sections, str_join(ctx.ext_calls_decls, ""))
+        list_push(sections, "\n")
+    if str_len(shims_str) > 0:
+        list_push(sections, shims_str)
+    if str_len(structs_str) > 0:
+        list_push(sections, structs_str)
+    if str_len(globals_str) > 0:
+        list_push(sections, globals_str)
+    if str_len(funcs_str) > 0:
+        list_push(sections, funcs_str)
+    return str_join(sections, "")

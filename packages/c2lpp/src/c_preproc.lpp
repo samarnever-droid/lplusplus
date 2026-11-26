@@ -1,0 +1,426 @@
+# c_preproc.lpp — General C Preprocessor (comments, #if/#ifdef/#elif/#else/#endif, #define object & function-like macro expansion)
+#
+# Runs BEFORE struct/function parsing so conditional compilation (`#if`/`#else`)
+# never breaks brace depth and C function-like macros (`can_read(b, n)`,
+# `static_strlen(s)`, `cjson_min(a, b)`, etc.) expand generically for ANY C file.
+
+def pp_is_ident_char(ch: Str) -> Bool:
+    if str_len(ch) != 1:
+        return false
+    c := ord(ch)
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95:
+        return true
+    return false
+
+def pp_strip_comments_and_join(source: Str) -> Str:
+    # 1. Join backslash-newline continuations and strip C `//` and `/* ... */` comments
+    #    while preserving string (`"..."`) and char (`'...'`) literals.
+    mut clean := str_replace(source, "\r\n", "\n")
+    clean = str_replace(clean, "\\\n", " ")
+    n := str_len(clean)
+    mut out := list_new()
+    mut i := 0
+    mut seg_start := 0
+    mut in_dq := false
+    mut in_sq := false
+    while i < n:
+        ch := str_substr(clean, i, 1)
+        if in_dq:
+            if ch == "\\" && i + 1 < n:
+                i = i + 2
+                continue
+            if ch == "\"":
+                in_dq = false
+            i = i + 1
+            continue
+        if in_sq:
+            if ch == "\\" && i + 1 < n:
+                i = i + 2
+                continue
+            if ch == "'":
+                in_sq = false
+            i = i + 1
+            continue
+        if ch == "\"":
+            in_dq = true
+            i = i + 1
+            continue
+        if ch == "'":
+            in_sq = true
+            i = i + 1
+            continue
+        if ch == "/" && i + 1 < n:
+            nxt := str_substr(clean, i + 1, 1)
+            if nxt == "/":
+                if i > seg_start:
+                    list_push(out, str_substr(clean, seg_start, i - seg_start))
+                i = i + 2
+                while i < n && str_substr(clean, i, 1) != "\n":
+                    i = i + 1
+                seg_start = i
+                continue
+            if nxt == "*":
+                if i > seg_start:
+                    list_push(out, str_substr(clean, seg_start, i - seg_start))
+                i = i + 2
+                while i + 1 < n:
+                    if str_substr(clean, i, 1) == "*" && str_substr(clean, i + 1, 1) == "/":
+                        i = i + 2
+                        break
+                    if str_substr(clean, i, 1) == "\n":
+                        list_push(out, "\n")
+                    i = i + 1
+                list_push(out, " ")
+                seg_start = i
+                continue
+        i = i + 1
+    if seg_start < n:
+        list_push(out, str_substr(clean, seg_start, n - seg_start))
+    return str_join(out, "")
+
+def pp_eval_cond(expr_raw: Str, defined_vals: Map[Str, Int]) -> Bool:
+    mut e := str_trim(expr_raw)
+    if str_len(e) == 0 || e == "0" || e == "false":
+        return false
+    if e == "1" || e == "true":
+        return true
+    # Strip outer parens if wrapping whole expression
+    if str_starts_with(e, "(") && str_ends_with(e, ")"):
+        mut d := 0
+        mut wraps := true
+        mut k := 0
+        en := str_len(e)
+        while k < en:
+            ch := str_substr(e, k, 1)
+            if ch == "(":
+                d = d + 1
+            elif ch == ")":
+                d = d - 1
+                if d == 0 && k < en - 1:
+                    wraps = false
+                    break
+            k = k + 1
+        if wraps:
+            return pp_eval_cond(str_substr(e, 1, en - 2), defined_vals)
+    # Split on top-level `||`
+    mut d := 0
+    mut i := 0
+    en := str_len(e)
+    while i + 1 < en:
+        ch := str_substr(e, i, 1)
+        if ch == "(":
+            d = d + 1
+        elif ch == ")":
+            d = d - 1
+        elif d == 0 && ch == "|" && str_substr(e, i + 1, 1) == "|":
+            left := str_substr(e, 0, i)
+            right := str_substr(e, i + 2, en - i - 2)
+            return pp_eval_cond(left, defined_vals) || pp_eval_cond(right, defined_vals)
+        i = i + 1
+    # Split on top-level `&&`
+    d = 0
+    i = 0
+    while i + 1 < en:
+        ch := str_substr(e, i, 1)
+        if ch == "(":
+            d = d + 1
+        elif ch == ")":
+            d = d - 1
+        elif d == 0 && ch == "&" && str_substr(e, i + 1, 1) == "&":
+            left := str_substr(e, 0, i)
+            right := str_substr(e, i + 2, en - i - 2)
+            return pp_eval_cond(left, defined_vals) && pp_eval_cond(right, defined_vals)
+        i = i + 1
+    if str_starts_with(e, "!"):
+        return !pp_eval_cond(str_substr(e, 1, en - 1), defined_vals)
+    if str_starts_with(e, "defined(") && str_ends_with(e, ")"):
+        sym := str_trim(str_substr(e, 8, en - 9))
+        return map_has(defined_vals, sym)
+    if str_starts_with(e, "defined "):
+        sym := str_trim(str_substr(e, 8, en - 8))
+        return map_has(defined_vals, sym)
+    # Handle `SYM == VAL` and `SYM != VAL`
+    eq := str_find(e, "==")
+    if eq > 0:
+        lhs := str_trim(str_substr(e, 0, eq))
+        rhs := str_trim(str_substr(e, eq + 2, en - eq - 2))
+        mut lv := 0
+        if map_has(defined_vals, lhs):
+            lv = map_get(defined_vals, lhs)
+        else:
+            lv = str_to_int(lhs)
+        mut rv := 0
+        if map_has(defined_vals, rhs):
+            rv = map_get(defined_vals, rhs)
+        else:
+            rv = str_to_int(rhs)
+        return lv == rv
+    neq := str_find(e, "!=")
+    if neq > 0:
+        lhs := str_trim(str_substr(e, 0, neq))
+        rhs := str_trim(str_substr(e, neq + 2, en - neq - 2))
+        mut lv := 0
+        if map_has(defined_vals, lhs):
+            lv = map_get(defined_vals, lhs)
+        else:
+            lv = str_to_int(lhs)
+        mut rv := 0
+        if map_has(defined_vals, rhs):
+            rv = map_get(defined_vals, rhs)
+        else:
+            rv = str_to_int(rhs)
+        return lv != rv
+    if map_has(defined_vals, e):
+        return map_get(defined_vals, e) != 0
+    return false
+
+def pp_replace_ident(src: Str, target: Str, repl: Str) -> Str:
+    tlen := str_len(target)
+    slen := str_len(src)
+    if tlen == 0 || slen < tlen:
+        return src
+    mut out := list_new()
+    mut pos := 0
+    while pos < slen:
+        rem := str_substr(src, pos, slen - pos)
+        idx := str_find(rem, target)
+        if idx < 0:
+            list_push(out, rem)
+            break
+        abs_idx := pos + idx
+        mut left_ok := true
+        if abs_idx > 0:
+            left_ok = !pp_is_ident_char(str_substr(src, abs_idx - 1, 1))
+        mut right_ok := true
+        if abs_idx + tlen < slen:
+            right_ok = !pp_is_ident_char(str_substr(src, abs_idx + tlen, 1))
+        list_push(out, str_substr(src, pos, idx))
+        if left_ok && right_ok:
+            list_push(out, str_concat(repl, ""))
+        else:
+            list_push(out, str_concat(target, ""))
+        pos = abs_idx + tlen
+    return str_join(out, "")
+
+def pp_expand_fn_macro(line: Str, mname: Str, mparams: List[Str], mbody: Str) -> Str:
+    needle := str_concat(mname, "(")
+    if !str_contains(line, needle):
+        return line
+    mut cur := line
+    mut guard := 0
+    while str_contains(cur, needle) && guard < 16:
+        guard = guard + 1
+        idx := str_find(cur, needle)
+        if idx > 0 && pp_is_ident_char(str_substr(cur, idx - 1, 1)):
+            break
+        open_p := idx + str_len(mname)
+        # Find matching ')' and split top-level args
+        mut depth := 0
+        mut in_dq := false
+        mut in_sq := false
+        mut arg_start := open_p + 1
+        mut args := list_new()
+        mut close_p := -1
+        mut k := open_p
+        cn := str_len(cur)
+        while k < cn:
+            ch := str_substr(cur, k, 1)
+            if (in_dq || in_sq) && ch == "\\":
+                k = k + 2
+                continue
+            if !in_sq && ch == "\"":
+                in_dq = !in_dq
+            elif !in_dq && ch == "'":
+                in_sq = !in_sq
+            elif !in_dq && !in_sq:
+                if ch == "(":
+                    depth = depth + 1
+                elif ch == ")":
+                    depth = depth - 1
+                    if depth == 0:
+                        list_push(args, str_trim(str_substr(cur, arg_start, k - arg_start)))
+                        close_p = k
+                        break
+                elif ch == "," && depth == 1:
+                    list_push(args, str_trim(str_substr(cur, arg_start, k - arg_start)))
+                    arg_start = k + 1
+            k = k + 1
+        if close_p < 0 || len(args) != len(mparams):
+            break
+        mut expanded := str_concat(mbody, "")
+        mut pi := 0
+        pn := len(mparams)
+        while pi < pn:
+            expanded = pp_replace_ident(expanded, mparams[pi], args[pi])
+            pi = pi + 1
+        before := str_substr(cur, 0, idx)
+        after := str_substr(cur, close_p + 1, cn - close_p - 1)
+        cur = str_concat(before, str_concat(expanded, after))
+    return cur
+
+def c_preprocess(source: Str) -> Str:
+    stripped := pp_strip_comments_and_join(source)
+    lines := str_lines(stripped)
+    mut defined_vals := map_new()
+    # Default hosted Linux/Unix target defines
+    map_put(defined_vals, "__linux__", 1)
+    map_put(defined_vals, "__unix__", 1)
+    map_put(defined_vals, "COMMON_UNIX_PLATFORMS", 1)
+
+    mut fn_macro_names := list_new()
+    mut fn_macro_params := list_new()
+    mut fn_macro_bodies := list_new()
+
+    # Conditional stack: active[d] (1 = emitting, 0 = skipping), seen_true[d] (1 = some branch taken)
+    mut active := [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    mut seen_true := [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    mut depth := 0
+
+    mut out := list_new()
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        raw := lines[i]
+        t := str_trim(raw)
+        i = i + 1
+
+        if str_starts_with(t, "#ifdef "):
+            sym := str_trim(str_substr(t, 7, str_len(t) - 7))
+            parent_on := active[depth] == 1
+            depth = depth + 1
+            if parent_on && map_has(defined_vals, sym):
+                active[depth] = 1
+                seen_true[depth] = 1
+            else:
+                active[depth] = 0
+                seen_true[depth] = 0
+            continue
+
+        if str_starts_with(t, "#ifndef "):
+            sym := str_trim(str_substr(t, 8, str_len(t) - 8))
+            parent_on := active[depth] == 1
+            depth = depth + 1
+            if parent_on && !map_has(defined_vals, sym):
+                active[depth] = 1
+                seen_true[depth] = 1
+            else:
+                active[depth] = 0
+                seen_true[depth] = 0
+            continue
+
+        if str_starts_with(t, "#if "):
+            cond := str_trim(str_substr(t, 4, str_len(t) - 4))
+            parent_on := active[depth] == 1
+            depth = depth + 1
+            if parent_on && pp_eval_cond(cond, defined_vals):
+                active[depth] = 1
+                seen_true[depth] = 1
+            else:
+                active[depth] = 0
+                seen_true[depth] = 0
+            continue
+
+        if str_starts_with(t, "#elif "):
+            if depth > 0:
+                cond := str_trim(str_substr(t, 6, str_len(t) - 6))
+                parent_on := active[depth - 1] == 1
+                if parent_on && seen_true[depth] == 0 && pp_eval_cond(cond, defined_vals):
+                    active[depth] = 1
+                    seen_true[depth] = 1
+                else:
+                    active[depth] = 0
+            continue
+
+        if str_starts_with(t, "#else"):
+            if depth > 0:
+                parent_on := active[depth - 1] == 1
+                if parent_on && seen_true[depth] == 0:
+                    active[depth] = 1
+                    seen_true[depth] = 1
+                else:
+                    active[depth] = 0
+            continue
+
+        if str_starts_with(t, "#endif"):
+            if depth > 0:
+                depth = depth - 1
+            continue
+
+        if active[depth] == 0:
+            continue
+
+        if str_starts_with(t, "#define "):
+            rest := str_trim(str_substr(t, 8, str_len(t) - 8))
+            # Check for function-like macro `#define NAME(p1, p2) BODY` (no space before `(`)
+            sp := str_find(rest, " ")
+            lp := str_find(rest, "(")
+            if lp > 0 && (sp < 0 || lp < sp):
+                rp := str_find(rest, ")")
+                if rp > lp:
+                    mname := str_trim(str_substr(rest, 0, lp))
+                    plist_raw := str_substr(rest, lp + 1, rp - lp - 1)
+                    mbody := str_trim(str_substr(rest, rp + 1, str_len(rest) - rp - 1))
+                    # Do not expand export-annotation macros or loop macros handled structurally
+                    if mname != "CJSON_PUBLIC" && mname != "cJSON_ArrayForEach" && str_len(mbody) > 0:
+                        mut plist := list_new()
+                        mut ps := 0
+                        mut pk := 0
+                        plen := str_len(plist_raw)
+                        while pk <= plen:
+                            mut pch := ","
+                            if pk < plen:
+                                pch = str_substr(plist_raw, pk, 1)
+                            if pch == ",":
+                                pitem := str_trim(str_substr(plist_raw, ps, pk - ps))
+                                if str_len(pitem) > 0:
+                                    list_push(plist, pitem)
+                                ps = pk + 1
+                            pk = pk + 1
+                        if len(plist) > 0:
+                            list_push(fn_macro_names, mname)
+                            list_push(fn_macro_params, plist)
+                            list_push(fn_macro_bodies, mbody)
+                continue
+            # Object-like macro `#define NAME [VAL]`
+            if sp > 0:
+                mname := str_trim(str_substr(rest, 0, sp))
+                mval := str_trim(str_substr(rest, sp + 1, str_len(rest) - sp - 1))
+                # Record numeric value for future `#if` checks
+                if mval == "0":
+                    map_put(defined_vals, mname, 0)
+                else:
+                    iv := str_to_int(mval)
+                    if iv != 0:
+                        map_put(defined_vals, mname, iv)
+                    else:
+                        map_put(defined_vals, mname, 1)
+            elif str_len(rest) > 0:
+                map_put(defined_vals, rest, 1)
+            # Keep `#define` line in output so translator can emit `const NAME = VAL`
+            list_push(out, raw)
+            continue
+
+        if str_starts_with(t, "#undef "):
+            continue
+        if str_starts_with(t, "#include") || str_starts_with(t, "#pragma") || str_starts_with(t, "#error") || str_starts_with(t, "#warning"):
+            continue
+
+        # Expand any registered function-like macros on this active line (up to 3 passes for nested macros)
+        mut expanded_line := raw
+        mut pass := 0
+        while pass < 3:
+            mut changed := false
+            mut mi := 0
+            mn := len(fn_macro_names)
+            while mi < mn:
+                before_l := expanded_line
+                expanded_line = pp_expand_fn_macro(expanded_line, fn_macro_names[mi], fn_macro_params[mi], fn_macro_bodies[mi])
+                if expanded_line != before_l:
+                    changed = true
+                mi = mi + 1
+            if !changed:
+                break
+            pass = pass + 1
+        list_push(out, expanded_line)
+
+    return str_join(out, "\n")
