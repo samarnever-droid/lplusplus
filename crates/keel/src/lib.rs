@@ -135,9 +135,44 @@ fn registry_or_default(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
 }
 
 fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
+    let build_flags = commands::build::BuildFlags {
+        optimize: cli.optimize,
+        secure: cli.secure,
+    };
     match &cli.command {
         cli::Command::Cache { action } => commands::cache::run(action, cli.cache_backend),
         cli::Command::SelfUpdate { check } => commands::self_update::self_update(*check),
+        cli::Command::Optimize => {
+            let reg = registry_or_default(cli).ok();
+            let flags = commands::build::BuildFlags {
+                optimize: true,
+                secure: cli.secure,
+            };
+            commands::build::build_selected_with_flags(
+                directory,
+                &commands::build::lpp_bin(),
+                &commands::build::run_lpp_jobs,
+                reg.as_ref(),
+                None,
+                flags,
+            )
+        }
+        cli::Command::Secure => {
+            if directory.join("Keel.lock").is_file() {
+                commands::diagnostics::verify(&registry_or_default(cli)?, directory)?;
+            }
+            let reg = registry_or_default(cli).ok();
+            let flags = commands::build::BuildFlags {
+                optimize: cli.optimize,
+                secure: true,
+            };
+            commands::build::check_with_flags(
+                directory,
+                &commands::build::lpp_bin(),
+                reg.as_ref(),
+                flags,
+            )
+        }
         cli::Command::Install => {
             let reg = registry_or_default(cli).ok();
             commands::registry::install(reg.as_ref(), directory)
@@ -173,26 +208,42 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
             keep_legacy,
         } => commands::migrate::migrate(directory, *dry_run, *keep_legacy),
         cli::Command::Build => {
-            let kind = match cli.cache_backend {
-                cli::CacheBackend::Auto => lpp_pm::KvBackendKind::Auto,
-                cli::CacheBackend::Memory => lpp_pm::KvBackendKind::Memory,
-            };
-            let kv = Some(std::sync::Arc::new(std::sync::Mutex::new(
-                lpp_pm::create_kv(kind).map_err(|error| error.to_string())?,
-            )));
-            // Staging may need the registry (registry deps); path-only
-            // workspaces never touch it.
             let reg = registry_or_default(cli).ok();
-            commands::build::build_incremental(
-                directory,
-                &commands::build::lpp_bin(),
-                kv,
-                reg.as_ref(),
-            )
+            if build_flags != commands::build::BuildFlags::default() {
+                commands::build::build_selected_with_flags(
+                    directory,
+                    &commands::build::lpp_bin(),
+                    &commands::build::run_lpp_jobs,
+                    reg.as_ref(),
+                    None,
+                    build_flags,
+                )
+            } else {
+                let kind = match cli.cache_backend {
+                    cli::CacheBackend::Auto => lpp_pm::KvBackendKind::Auto,
+                    cli::CacheBackend::Memory => lpp_pm::KvBackendKind::Memory,
+                };
+                let kv = Some(std::sync::Arc::new(std::sync::Mutex::new(
+                    lpp_pm::create_kv(kind).map_err(|error| error.to_string())?,
+                )));
+                // Staging may need the registry (registry deps); path-only
+                // workspaces never touch it.
+                commands::build::build_incremental(
+                    directory,
+                    &commands::build::lpp_bin(),
+                    kv,
+                    reg.as_ref(),
+                )
+            }
         }
         cli::Command::Check => {
             let reg = registry_or_default(cli).ok();
-            commands::build::check(directory, &commands::build::lpp_bin(), reg.as_ref())
+            commands::build::check_with_flags(
+                directory,
+                &commands::build::lpp_bin(),
+                reg.as_ref(),
+                build_flags,
+            )
         }
         cli::Command::Clean => commands::clean::clean(directory),
         cli::Command::Metadata => commands::metadata::metadata(directory),
@@ -248,7 +299,12 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
         cli::Command::Remove { name } => commands::project::remove_dep(directory, name.as_str()),
         cli::Command::Run => {
             let reg = registry_or_default(cli).ok();
-            commands::build::run(directory, &commands::build::lpp_bin(), reg.as_ref())
+            commands::build::run_with_flags(
+                directory,
+                &commands::build::lpp_bin(),
+                reg.as_ref(),
+                build_flags,
+            )
         }
         cli::Command::Test => {
             let reg = registry_or_default(cli).ok();

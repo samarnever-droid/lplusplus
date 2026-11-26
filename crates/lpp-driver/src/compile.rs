@@ -241,6 +241,107 @@ pub fn compile_entry(
     )
 }
 
+pub(crate) fn bundled_stdlib_dir() -> Option<PathBuf> {
+    if let Ok(env_dir) = std::env::var("LPP_STDLIB_DIR") {
+        let p = PathBuf::from(env_dir);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(bin_dir) = exe.parent()
+    {
+        for candidate in [
+            bin_dir.join("../lib/stdlib"),
+            bin_dir.join("../../stdlib"),
+            bin_dir.join("stdlib"),
+        ] {
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    let manifest_stdlib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("stdlib");
+    if manifest_stdlib.is_dir() {
+        return Some(manifest_stdlib);
+    }
+    None
+}
+
+pub(crate) fn discover_package_dependencies(entry: &Path, package_name: &str) -> Vec<PackageSpec> {
+    let mut deps = Vec::new();
+    let mut seen_names = std::collections::BTreeSet::new();
+    seen_names.insert(package_name.to_string());
+
+    if package_name != "stdlib"
+        && let Some(stdlib) = bundled_stdlib_dir()
+    {
+        seen_names.insert("stdlib".to_string());
+        deps.push(PackageSpec::new("stdlib", stdlib));
+    }
+
+    let abs_entry = if entry.is_absolute() {
+        entry.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(entry)
+    };
+
+    let mut search_dir = abs_entry.parent().map(Path::to_path_buf);
+    for _ in 0..8 {
+        let Some(dir) = search_dir else { break };
+        let pkgs_dir = dir.join(".lpp_packages");
+        if pkgs_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&pkgs_dir) {
+                let mut sorted: Vec<_> = entries.flatten().collect();
+                sorted.sort_by_key(|e| e.file_name());
+                for entry in sorted {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with('.') || !seen_names.insert(name.clone()) {
+                        continue;
+                    }
+                    let mut source_root = path.join("src");
+                    if let Ok(toml_text) = std::fs::read_to_string(path.join("lpp.toml")) {
+                        for line in toml_text.lines() {
+                            let trimmed = line.trim();
+                            if let Some(rest) = trimmed.strip_prefix("entry") {
+                                let rest = rest.trim_start();
+                                if let Some(rest) = rest.strip_prefix('=') {
+                                    let val = rest.trim().trim_matches('"').trim_matches('\'');
+                                    let entry_path = path.join(val);
+                                    if let Some(parent) = entry_path.parent()
+                                        && parent.is_dir()
+                                    {
+                                        source_root = parent.to_path_buf();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !source_root.is_dir() {
+                        source_root = path;
+                    }
+                    deps.push(PackageSpec::new(name, source_root));
+                }
+            }
+            break;
+        }
+        if dir.join("Keel.toml").is_file() {
+            break;
+        }
+        search_dir = dir.parent().map(Path::to_path_buf);
+    }
+    deps
+}
+
 /// Compile with explicit target and optimization choices. Every backend sees
 /// MIR only after structural verification, bounded optimization, and
 /// independent ownership-plan and balance proofs.
@@ -268,16 +369,8 @@ pub fn compile_entry_with_options(
         PackageSpec::new(package_name, source_root),
     )
     .with_allow_cycles(true);
-    // Treat the bundled stdlib as a declared dependency of standalone compiler
-    // invocations. This lets `from stdlib.math import ...` resolve exactly like
-    // a package dependency while preserving local-file precedence for ordinary
-    // `import math` cases.
-    let bundled_stdlib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("stdlib");
-    if package_name != "stdlib" && bundled_stdlib.is_dir() {
-        request = request.with_dependency(PackageSpec::new("stdlib", bundled_stdlib));
+    for dep in discover_package_dependencies(entry, package_name) {
+        request = request.with_dependency(dep);
     }
     let graph = GraphBuilder::new(&filesystem)
         .build(request)
@@ -1119,5 +1212,61 @@ pub fn exec_output_retry(exe: &Path) -> std::io::Result<std::process::Output> {
             }
             Err(err) => return Err(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_staged_keel_packages_for_import_resolution() {
+        let root = std::env::temp_dir().join(format!(
+            "lpp_stage_discover_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let src_dir = root.join("src");
+        let dep_src = root.join(".lpp_packages/lpp-collections/src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dep_src).unwrap();
+        std::fs::write(
+            root.join("Keel.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".lpp_packages/lpp-collections/lpp.toml"),
+            "[package]\nname = \"lpp-collections\"\nversion = \"0.1.0\"\nentry = \"src/lib.lpp\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dep_src.join("lib.lpp"),
+            "def answer() -> Int:\n    return 42\n",
+        )
+        .unwrap();
+        let entry = src_dir.join("main.lpp");
+        std::fs::write(
+            &entry,
+            "import lpp_collections\ndef main():\n    print(answer())\n",
+        )
+        .unwrap();
+
+        let deps = discover_package_dependencies(&entry, "app");
+        assert!(
+            deps.iter()
+                .any(|d| d.name == "lpp-collections" && d.source_root == dep_src),
+            "expected lpp-collections in {deps:?}"
+        );
+
+        let compiled = compile_entry_with_options(
+            &entry,
+            "app",
+            BackendChoice::Cranelift,
+            CompileOptions::for_backend(BackendChoice::Cranelift),
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(compiled.is_ok(), "compile failed: {:?}", compiled.err());
     }
 }

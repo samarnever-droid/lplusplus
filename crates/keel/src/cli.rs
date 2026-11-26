@@ -17,6 +17,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub registry: Option<String>,
 
+    /// Enable release optimizations (`-O3 --lto`) for build/run
+    #[arg(long, visible_alias = "release", global = true)]
+    pub optimize: bool,
+
+    /// Enforce pure-safe compilation (`--deny-unsafe`) for build/check/run
+    #[arg(long, visible_alias = "deny-unsafe", global = true)]
+    pub secure: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -134,6 +142,10 @@ pub enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Build the workspace with full release optimizations (`-O3 --lto`)
+    Optimize,
+    /// Audit dependencies (if locked) and verify pure-safe code (`--deny-unsafe`)
+    Secure,
 }
 
 #[derive(Subcommand)]

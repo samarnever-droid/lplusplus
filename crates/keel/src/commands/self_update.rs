@@ -13,7 +13,7 @@ fn fetch_latest_tag() -> Result<String, String> {
             "-NoProfile",
             "-Command",
             &format!(
-                "(Invoke-RestMethod -Uri '{LATEST_RELEASE_API}' -Headers @{{'User-Agent'='keel-updater'}}).tag_name"
+                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (Invoke-RestMethod -Uri '{LATEST_RELEASE_API}' -Headers @{{'User-Agent'='keel-updater'}}).tag_name"
             ),
         ])
         .output()
@@ -102,7 +102,7 @@ pub fn self_update(check_only: bool) -> Result<(), String> {
             "Bypass",
             "-Command",
             &format!(
-                "$env:LPP_VERSION='{latest_tag}'; irm https://lplusplus.bond/install.ps1 | iex"
+                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $env:LPP_VERSION='{latest_tag}'; irm https://lplusplus.bond/install.ps1 | iex"
             ),
         ])
         .status()

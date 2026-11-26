@@ -92,14 +92,6 @@ pub struct CheckedUnit {
     pub mir: MirProgram,
 }
 
-fn bundled_stdlib_dir() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("stdlib");
-    dir.is_dir().then_some(dir)
-}
-
 fn span_to_range(sources: &SourceMap, span: lpp_common::Span) -> (usize, usize, usize, usize) {
     if let Some(file) = sources.get(span.file) {
         let (sl, sc) = file.line_column(span.start).unwrap_or((1, 1));
@@ -156,8 +148,8 @@ pub fn check_in_memory(
         PackageSpec::new(package_name, source_root),
     )
     .with_allow_cycles(true);
-    if let Some(stdlib) = bundled_stdlib_dir() {
-        request = request.with_dependency(PackageSpec::new("stdlib", stdlib));
+    for dep in crate::compile::discover_package_dependencies(virtual_path, package_name) {
+        request = request.with_dependency(dep);
     }
     let graph = GraphBuilder::new(&overlay).build(request).map_err(|err| {
         vec![SourceDiagnostic {

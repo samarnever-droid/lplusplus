@@ -310,11 +310,26 @@ impl<'fs, Fs: FileSystem + ?Sized> GraphBuilder<'fs, Fs> {
 
         let mut dependency_matches = BTreeMap::new();
         for package in packages.iter().skip(1) {
+            let normalized_pkg = package.name.replace('-', "_");
             let mut relatives = vec![relative.clone()];
-            if module.components().first().map(String::as_str) == Some(package.name.as_str())
-                && module.components().len() > 1
-            {
-                relatives.push(module_file_path_components(&module.components()[1..]));
+            let first_component = module.components().first().map(String::as_str);
+            let matches_package = first_component == Some(package.name.as_str())
+                || first_component == Some(normalized_pkg.as_str());
+            if matches_package {
+                if module.components().len() > 1 {
+                    relatives.push(module_file_path_components(&module.components()[1..]));
+                } else {
+                    if package.name != normalized_pkg {
+                        relatives.push(PathBuf::from(format!("{}.lpp", package.name)));
+                    }
+                    if let Some(stripped) = package.name.strip_prefix("lpp-") {
+                        relatives.push(PathBuf::from(format!("{stripped}.lpp")));
+                        relatives
+                            .push(PathBuf::from(format!("{}.lpp", stripped.replace('-', "_"))));
+                    }
+                    relatives.push(PathBuf::from("lib.lpp"));
+                    relatives.push(PathBuf::from("main.lpp"));
+                }
             }
             for dependency_relative in relatives {
                 let candidate = package.source_root.join(&dependency_relative);
@@ -324,6 +339,7 @@ impl<'fs, Fs: FileSystem + ?Sized> GraphBuilder<'fs, Fs> {
                 searched.push(candidate.clone());
                 if let Some(path) = self.exact_file(&candidate, &dependency_relative)? {
                     dependency_matches.insert(path, package.id);
+                    break;
                 }
             }
         }
@@ -547,3 +563,40 @@ impl fmt::Display for GraphError {
 }
 
 impl std::error::Error for GraphError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::OsFileSystem;
+
+    #[test]
+    fn resolves_hyphenated_keel_package_with_lib_lpp() {
+        let root = std::env::temp_dir().join(format!(
+            "lpp_graph_pkg_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let app_src = root.join("app/src");
+        let dep_src = root.join("deps/lpp-collections/src");
+        std::fs::create_dir_all(&app_src).unwrap();
+        std::fs::create_dir_all(&dep_src).unwrap();
+        let entry = app_src.join("main.lpp");
+        std::fs::write(
+            &entry,
+            "import lpp_collections\ndef main():\n    print(1)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dep_src.join("lib.lpp"),
+            "def helper() -> Int:\n    return 1\n",
+        )
+        .unwrap();
+
+        let request = GraphRequest::new(&entry, PackageSpec::new("app", &app_src))
+            .with_dependency(PackageSpec::new("lpp-collections", &dep_src));
+        let graph = GraphBuilder::new(&OsFileSystem).build(request);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(graph.is_ok(), "graph failed: {:?}", graph.err());
+    }
+}

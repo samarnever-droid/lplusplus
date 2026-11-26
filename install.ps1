@@ -21,6 +21,26 @@ $ChecksumUrl = "$ReleaseBaseUrl/SHA256SUMS"
 
 New-Item -ItemType Directory -Force $BinDir, $LibDir | Out-Null
 
+function Install-Binary {
+    param([string]$Source, [string]$Destination)
+    $backup = "$Destination.old"
+    if (Test-Path $backup) {
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $Destination) {
+        try {
+            Move-Item -Path $Destination -Destination $backup -Force -ErrorAction Stop
+        } catch {
+            $uniqueBackup = "$Destination.old.$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            Move-Item -Path $Destination -Destination $uniqueBackup -Force
+        }
+    }
+    Copy-Item -Path $Source -Destination $Destination -Force
+    if (Test-Path $backup) {
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Install-Release {
     $temp = Join-Path $env:TEMP "lpp-release-$([guid]::NewGuid())"
     New-Item -ItemType Directory -Force $temp | Out-Null
@@ -84,12 +104,12 @@ function Install-Release {
         if ($compilerInfo.PSIsContainer -or ($compilerInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release archive is missing a regular lpp.exe" }
         if ($linkerInfo.PSIsContainer -or ($linkerInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release archive is missing a regular lpp-link.exe" }
         Write-Host "[2/3] Installing verified compiler, linker, package manager, and runtime objects..." -ForegroundColor Yellow
-        Copy-Item "$root\bin\lpp.exe" "$BinDir\lpp.exe" -Force
-        Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+        Install-Binary "$root\bin\lpp.exe" "$BinDir\lpp.exe"
+        Install-Binary "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe"
         if (Test-Path "$root\bin\keel.exe") {
             $keelInfo = Get-Item "$root\bin\keel.exe" -ErrorAction Stop
             if (-not $keelInfo.PSIsContainer -and -not ($keelInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                Copy-Item "$root\bin\keel.exe" "$BinDir\keel.exe" -Force
+                Install-Binary "$root\bin\keel.exe" "$BinDir\keel.exe"
             }
         }
         Copy-Item "$root\lib\*" $LibDir -Recurse -Force

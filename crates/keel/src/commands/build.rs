@@ -523,6 +523,25 @@ pub fn stage_all_deps(
 // Jobs
 // ---------------------------------------------------------------------------
 
+/// Optional compiler optimization and safety flags passed through to `lpp`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BuildFlags {
+    pub optimize: bool,
+    pub secure: bool,
+}
+
+impl BuildFlags {
+    fn append_to_cmd(self, cmd: &mut Vec<String>) {
+        if self.optimize {
+            cmd.push("-O3".to_string());
+            cmd.push("--lto".to_string());
+        }
+        if self.secure {
+            cmd.push("--deny-unsafe".to_string());
+        }
+    }
+}
+
 /// The lpp invocations a member needs: one (target, cmd) row per target.
 ///
 /// A **library** member (`src/lib.lpp`) emits an object file
@@ -531,6 +550,14 @@ pub fn stage_all_deps(
 pub fn member_jobs(
     member: &lpp_pm::Member,
     out_dir: &Path,
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    member_jobs_with_flags(member, out_dir, BuildFlags::default())
+}
+
+pub fn member_jobs_with_flags(
+    member: &lpp_pm::Member,
+    out_dir: &Path,
+    flags: BuildFlags,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
     let manifest = &member.manifest;
     let entry = entry_point(&member.dir)?;
@@ -567,6 +594,7 @@ pub fn member_jobs(
             cmd.push("--target".to_string());
             cmd.push(target.clone());
         }
+        flags.append_to_cmd(&mut cmd);
         cmd.push("-o".to_string());
         cmd.push(out_path.display().to_string());
         rows.push((target, cmd));
@@ -634,6 +662,17 @@ pub fn build_selected(
     reg: Option<&lpp_pm::Registry>,
     only: Option<&str>,
 ) -> Result<(), String> {
+    build_selected_with_flags(dir, lpp_bin, run_job, reg, only, BuildFlags::default())
+}
+
+pub fn build_selected_with_flags(
+    dir: &Path,
+    lpp_bin: &str,
+    run_job: &JobRunner,
+    reg: Option<&lpp_pm::Registry>,
+    only: Option<&str>,
+    flags: BuildFlags,
+) -> Result<(), String> {
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
     let plan = ws.build_plan().map_err(|e| e.to_string())?;
     let selected = selected_build_members(&ws, only)?;
@@ -644,7 +683,7 @@ pub fn build_selected(
     // Precompute each member's (target, cmd) rows.
     let mut jobs: Vec<Vec<(String, Vec<String>)>> = Vec::with_capacity(ws.members.len());
     for m in &ws.members {
-        jobs.push(member_jobs(m, &out_dir)?);
+        jobs.push(member_jobs_with_flags(m, &out_dir, flags)?);
     }
 
     let mut b = Builder::default();
@@ -961,14 +1000,26 @@ fn selected_member<'a>(
 
 /// `keel check` — type-check only, no codegen: `lpp <entry> --check`.
 pub fn check(dir: &Path, lpp_bin: &str, reg: Option<&lpp_pm::Registry>) -> Result<(), String> {
+    check_with_flags(dir, lpp_bin, reg, BuildFlags::default())
+}
+
+pub fn check_with_flags(
+    dir: &Path,
+    lpp_bin: &str,
+    reg: Option<&lpp_pm::Registry>,
+    flags: BuildFlags,
+) -> Result<(), String> {
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
     let _guard = lock_workspace(&ws.root)?;
     let member = selected_member(&ws, dir)?;
     stage_all_deps(&ws, reg)?;
     let entry = member.dir.join(entry_point(&member.dir)?);
-    let status = std::process::Command::new(lpp_bin)
-        .arg(&entry)
-        .arg("--check")
+    let mut cmd = std::process::Command::new(lpp_bin);
+    cmd.arg(&entry).arg("--check");
+    if flags.secure {
+        cmd.arg("--deny-unsafe");
+    }
+    let status = cmd
         .current_dir(&ws.root)
         .status()
         .map_err(|e| format!("failed to run lpp ({lpp_bin}): {e}"))?;
@@ -984,13 +1035,25 @@ pub fn check(dir: &Path, lpp_bin: &str, reg: Option<&lpp_pm::Registry>) -> Resul
 
 /// `keel run` — build + run the project: `lpp <entry> --run`.
 pub fn run(dir: &Path, lpp_bin: &str, reg: Option<&lpp_pm::Registry>) -> Result<(), String> {
+    run_with_flags(dir, lpp_bin, reg, BuildFlags::default())
+}
+
+pub fn run_with_flags(
+    dir: &Path,
+    lpp_bin: &str,
+    reg: Option<&lpp_pm::Registry>,
+    flags: BuildFlags,
+) -> Result<(), String> {
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
     let _guard = lock_workspace(&ws.root)?;
     let member = selected_member(&ws, dir)?;
     stage_all_deps(&ws, reg)?;
     let entry = member.dir.join(entry_point(&member.dir)?);
+    let mut extra = Vec::new();
+    flags.append_to_cmd(&mut extra);
     let status = std::process::Command::new(lpp_bin)
         .arg(&entry)
+        .args(&extra)
         .arg("--run")
         .current_dir(&ws.root)
         .status()

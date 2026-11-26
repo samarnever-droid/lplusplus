@@ -174,7 +174,9 @@ pub fn install(reg: Option<&Registry>, dir: &Path) -> Result<(), String> {
         let registry = reg.ok_or_else(|| {
             "registry dependencies require --registry <git-url> or KEEL_REGISTRY".to_string()
         })?;
-        return fetch_all(registry, dir);
+        fetch_all(registry, dir)?;
+        super::build::stage_all_deps(&workspace, Some(registry))?;
+        return Ok(());
     }
 
     let resolved = lpp_pm::resolve_workspace(&roots, &|_| Some(Vec::new()))
@@ -182,6 +184,7 @@ pub fn install(reg: Option<&Registry>, dir: &Path) -> Result<(), String> {
     let lock = lpp_pm::Lock::from_resolved(&resolved);
     lock.save_atomic(&workspace.root.join("Keel.lock"))
         .map_err(|error| error.to_string())?;
+    super::build::stage_all_deps(&workspace, None)?;
     println!(
         "installed 0 registry package(s); locked {} workspace package(s)",
         roots.len()

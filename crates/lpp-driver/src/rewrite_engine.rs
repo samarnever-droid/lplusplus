@@ -80,6 +80,8 @@ const KEEL_COMMANDS: &[&str] = &[
     "list",
     "version",
     "workspace",
+    "optimize",
+    "secure",
 ];
 
 /// Exit code used when the rewrite engine deliberately defers to v1.
@@ -265,7 +267,11 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 idx += 1;
             }
             "--lto" => lto = true,
-            "--deny-unsafe" => deny_unsafe = true,
+            "--optimize" | "--release" => {
+                optimization = OptimizationLevel::O3;
+                lto = true;
+            }
+            "--deny-unsafe" | "--secure" => deny_unsafe = true,
             "--multiboot2" => multiboot2 = true,
             "--image-base" => {
                 let Some(value) = rest.get(idx + 1) else {
@@ -1062,9 +1068,12 @@ fn print_help() {
     println!("  --llvm           shorthand for --backend llvm");
     println!("  --target <t>     host, x86_64/aarch64, *-unknown-none (kernel), or wasm32-wasip1");
     println!("  -O<level>        MIR/backend optimization: 0, 1, 2, 3, s, or z");
+    println!("  --optimize       Shorthand for -O3 --lto (alias: --release)");
     println!("  -g, --debug      Emit DWARF/CodeView source debug info and keep frame pointers");
     println!("  --lto            Enable safe whole-program MIR inlining of small pure callees");
-    println!("  --deny-unsafe    Reject all unsafe blocks, pointer ops, and kernel intrinsics");
+    println!(
+        "  --deny-unsafe    Reject all unsafe blocks, pointer ops, and kernel intrinsics (alias: --secure)"
+    );
     println!("  --image-base HEX Base virtual/load address for freestanding ELF kernels");
     println!("  --multiboot2     Prepend a Multiboot2 boot header into bare-metal ELF images");
     println!("  --pgo-generate   Instrument Cranelift; write a profile at LPP_PGO_PROFILE");
