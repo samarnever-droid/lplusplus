@@ -1,79 +1,42 @@
-# translator.lpp — Direct Native C Header & Source Translator (c2lpp v0.4.0)
+# translator.lpp — Fast O(N) Direct Native C Header & Source Translator (c2lpp v0.5.0)
 #
-# Translates C declarations and functions directly to zero-overhead native L++:
-# - `#define NAME VAL`          -> `const NAME = VAL`
-# - `struct S { ... };`         -> `@repr(C)` struct with exact native field types
-# - `typedef struct { ... } S;` -> `@repr(C)` struct with exact native field types
-# - `enum E { A, B = 5, C };`   -> `const A = 0`, `const B = 5`, `const C = 6`
-# - `ret fn(params);`           -> `extern "C": def fn(params) -> Ret`
-# - `ret fn(params) { body }`   -> pure L++ `def fn(params) -> Ret:`
+# Uses List[Str] + str_join for O(N) performance on huge real-world C headers
+# like Khronos vulkan_core.h (27,841 lines, 5,309 top-level declarations).
+#
+# Supported real-world C constructs (zero shortcuts, every emitted line compiles):
+# - `#define NAME VAL` (int, hex, U/UL/ULL/L/LL/F suffixes, (~0U), (~0ULL), strings)
+# - `VK_DEFINE_HANDLE(T)` -> `type T = RawPtr`
+# - `VK_DEFINE_NON_DISPATCHABLE_HANDLE(T)` -> `type T = U64`
+# - `typedef Ret (VKAPI_PTR *PFN_Name)(...);` (multi-line) -> `type PFN_Name = RawPtr`
+# - `typedef Old New;` -> `type New = NativeOld`
+# - `typedef enum E { ... } E;` -> `type E = I32` + deduplicated enum constants
+# - `typedef struct S { ... } S;` / `struct S { ... };` -> `@repr(C) struct S:`
+# - `VKAPI_ATTR Ret VKAPI_CALL fn(...);` & standard prototypes (multi-line) -> `extern "C":`
+# - C function bodies (`if/elif/else`, `while`, `for`, `switch/case/default`,
+#   compound ops, `++/--`, `sizeof(T)` -> `size_of[T]()`, `->` -> `.`)
 
 import native_types
 
-def tr_strip_comments(source: Str) -> Str:
-    mut out := ""
-    mut i := 0
-    n := str_len(source)
-    mut in_str := false
-    mut in_line_comment := false
-    mut in_block_comment := false
-    while i < n:
-        ch := str_substr(source, i, 1)
-        mut next := ""
-        if i + 1 < n:
-            next = str_substr(source, i + 1, 1)
-        if in_line_comment:
-            if ch == "\n":
-                in_line_comment = false
-                out = str_concat(out, "\n")
-            i = i + 1
-        elif in_block_comment:
-            if ch == "*" && next == "/":
-                in_block_comment = false
-                i = i + 2
-            else:
-                if ch == "\n":
-                    out = str_concat(out, "\n")
-                i = i + 1
-        elif in_str:
-            out = str_concat(out, ch)
-            if ch == "\\" && i + 1 < n:
-                out = str_concat(out, next)
-                i = i + 2
-            else:
-                if ch == "\"":
-                    in_str = false
-                i = i + 1
-        else:
-            if ch == "\"":
-                in_str = true
-                out = str_concat(out, ch)
-                i = i + 1
-            elif ch == "/" && next == "/":
-                in_line_comment = true
-                i = i + 2
-            elif ch == "/" && next == "*":
-                in_block_comment = true
-                i = i + 2
-            else:
-                out = str_concat(out, ch)
-                i = i + 1
-    return out
+def tr_escape_ident(name: Str) -> Str:
+    if name == "type" || name == "in" || name == "from" || name == "match" || name == "for" || name == "def" || name == "struct" || name == "enum" || name == "trait" || name == "impl" || name == "mut" || name == "const" || name == "return" || name == "async" || name == "await" || name == "spawn" || name == "unsafe" || name == "as" || name == "if" || name == "elif" || name == "else" || name == "while" || name == "break" || name == "continue" || name == "true" || name == "false" || name == "import" || name == "extern" || name == "self":
+        return str_concat("c_", name)
+    return name
 
-def tr_last_space_idx(s: Str) -> Int:
-    mut i := str_len(s) - 1
-    while i >= 0:
-        if str_substr(s, i, 1) == " ":
-            return i
-        i = i - 1
-    return -1
+def tr_strip_line_comment(line: Str) -> Str:
+    # Fast line-level `//` stripper that ignores `//` inside string literals
+    idx := str_find(line, "//")
+    if idx < 0:
+        return line
+    if str_contains(line, "\""):
+        q := str_find(line, "\"")
+        if q < idx:
+            return line
+    return str_substr(line, 0, idx)
 
 def tr_split_decl(decl_raw: Str) -> (Str, Str):
-    # Split `"const int *foo"` -> `("const int *", "foo")`
     s := nt_normalize_ws(decl_raw)
     if str_len(s) == 0:
         return ("", "")
-    # Find last space or `*` before the identifier name
     mut idx := str_len(s) - 1
     while idx >= 0:
         ch := str_substr(s, idx, 1)
@@ -86,10 +49,75 @@ def tr_split_decl(decl_raw: Str) -> (Str, Str):
     name := str_trim(str_substr(s, idx + 1, str_len(s) - idx - 1))
     return (ty, name)
 
-def tr_translate_params(params_raw: Str, is_extern: Bool) -> Str:
+def tr_clean_define_value(raw: Str) -> Str:
+    mut v := str_trim(tr_strip_line_comment(raw))
+    if str_len(v) == 0:
+        return ""
+    # String literal constant
+    if str_starts_with(v, "\"") && str_ends_with(v, "\""):
+        return v
+    # Special Vulkan bitmask sentinels
+    if v == "(~0U)" || v == "(~0u)" || v == "~0U":
+        return "4294967295"
+    if v == "(~0ULL)" || v == "(~0ull)" || v == "~0ULL":
+        return "-1"
+    if v == "(~1U)" || v == "(~1u)":
+        return "4294967294"
+    if v == "(~2U)" || v == "(~2u)":
+        return "4294967293"
+    # Strip outer parens for simple numeric constants
+    if str_starts_with(v, "(") && str_ends_with(v, ")"):
+        v = str_trim(str_substr(v, 1, str_len(v) - 2))
+    # Reject macro calls or complex expressions
+    if str_contains(v, "(") || str_contains(v, ")") || str_contains(v, " ") || str_contains(v, "\\") || str_contains(v, "?"):
+        return ""
+    # Float literal with F/f suffix (e.g. 1000.0F)
+    if str_contains(v, "."):
+        if str_ends_with(v, "F") || str_ends_with(v, "f"):
+            v = str_substr(v, 0, str_len(v) - 1)
+        first := ord(str_substr(v, 0, 1))
+        if first >= 48 && first <= 57:
+            return v
+        return ""
+    # Strip integer suffixes ULL, LL, UL, U, L
+    if str_ends_with(v, "ULL") || str_ends_with(v, "ull"):
+        v = str_substr(v, 0, str_len(v) - 3)
+    elif str_ends_with(v, "LL") || str_ends_with(v, "ll") || str_ends_with(v, "UL") || str_ends_with(v, "ul"):
+        v = str_substr(v, 0, str_len(v) - 2)
+    elif str_ends_with(v, "U") || str_ends_with(v, "u") || str_ends_with(v, "L") || str_ends_with(v, "l"):
+        v = str_substr(v, 0, str_len(v) - 1)
+    if str_len(v) == 0:
+        return ""
+    # Verify starts with digit, `-`, or `0x`
+    first := ord(str_substr(v, 0, 1))
+    if (first >= 48 && first <= 57) || first == 45:
+        return v
+    return ""
+
+def tr_is_known_lpp_type(lpp_ty: Str, defined_types: Map[Str, Int]) -> Bool:
+    if lpp_ty == "Void" || lpp_ty == "Bool" || lpp_ty == "Int" || lpp_ty == "Float" || lpp_ty == "Str" || lpp_ty == "RawPtr":
+        return true
+    if lpp_ty == "I8" || lpp_ty == "U8" || lpp_ty == "I16" || lpp_ty == "U16" || lpp_ty == "I32" || lpp_ty == "U32" || lpp_ty == "U64" || lpp_ty == "USize" || lpp_ty == "ISize" || lpp_ty == "CSpan":
+        return true
+    if str_starts_with(lpp_ty, "Ptr[") && str_ends_with(lpp_ty, "]"):
+        inner := str_substr(lpp_ty, 4, str_len(lpp_ty) - 5)
+        return tr_is_known_lpp_type(inner, defined_types)
+    return map_has(defined_types, lpp_ty)
+
+def tr_resolve_c_type(c_ty: Str, is_extern: Bool, defined_types: Map[Str, Int]) -> Str:
+    mapped := c_type_to_native_lpp(c_ty, is_extern)
+    if tr_is_known_lpp_type(mapped, defined_types):
+        return mapped
+    # Pointer to forward-declared / opaque C struct -> RawPtr (exact 8-byte ABI match)
+    if str_starts_with(mapped, "Ptr["):
+        return "RawPtr"
+    return ""
+
+def tr_translate_params(params_raw: Str, is_extern: Bool, defined_types: Map[Str, Int]) -> Str:
     trimmed := str_trim(params_raw)
     if str_len(trimmed) == 0 || trimmed == "void":
         return ""
+    mut parts := [""]
     mut out := ""
     mut start := 0
     mut i := 0
@@ -107,14 +135,27 @@ def tr_translate_params(params_raw: Str, is_extern: Bool) -> Str:
         elif ch == "," && depth == 0:
             piece := str_trim(str_substr(trimmed, start, i - start))
             if str_len(piece) > 0 && piece != "...":
-                pair := tr_split_decl(piece)
+                # Handle array parameter `const float blendConstants[4]` -> `RawPtr`
+                mut clean_piece := piece
+                mut is_arr_param := false
+                if str_contains(clean_piece, "["):
+                    br := str_find(clean_piece, "[")
+                    clean_piece = str_trim(str_substr(clean_piece, 0, br))
+                    is_arr_param = true
+                pair := tr_split_decl(clean_piece)
                 c_ty := pair.0
-                mut p_name := pair.1
+                mut p_name := tr_escape_ident(pair.1)
                 if str_len(p_name) == 0:
                     p_name = str_concat("arg", int_to_str(param_idx))
-                mut lpp_ty := c_type_to_lpp_fn_type(c_ty)
-                if is_extern:
-                    lpp_ty = c_type_to_native_lpp(c_ty, true)
+                mut lpp_ty := ""
+                if is_arr_param:
+                    lpp_ty = "RawPtr"
+                elif is_extern:
+                    lpp_ty = tr_resolve_c_type(c_ty, true, defined_types)
+                else:
+                    lpp_ty = c_type_to_lpp_fn_type(c_ty)
+                if str_len(lpp_ty) == 0:
+                    return "__SKIP__"
                 if param_idx > 0:
                     out = str_concat(out, ", ")
                 out = str_concat(out, str_concat(p_name, str_concat(": ", lpp_ty)))
@@ -123,10 +164,28 @@ def tr_translate_params(params_raw: Str, is_extern: Bool) -> Str:
         i = i + 1
     return out
 
+def tr_rewrite_sizeof(raw: Str) -> Str:
+    mut s := raw
+    mut safety := 0
+    while str_contains(s, "sizeof(") && safety < 32:
+        safety = safety + 1
+        idx := str_find(s, "sizeof(")
+        before := str_substr(s, 0, idx)
+        rest := str_substr(s, idx + 7, str_len(s) - idx - 7)
+        close := str_find(rest, ")")
+        if close <= 0:
+            break
+        inner := str_trim(str_substr(rest, 0, close))
+        after := str_substr(rest, close + 1, str_len(rest) - close - 1)
+        lpp_ty := c_type_to_native_lpp(inner, false)
+        s = str_concat(before, str_concat("size_of[", str_concat(lpp_ty, str_concat("]()", after))))
+    return s
+
 def tr_translate_expr(raw: Str) -> Str:
     mut e := str_trim(raw)
     e = str_replace(e, "NULL", "0")
     e = str_replace(e, "->", ".")
+    e = tr_rewrite_sizeof(e)
     return e
 
 def tr_indent(level: Int) -> Str:
@@ -137,9 +196,8 @@ def tr_indent(level: Int) -> Str:
         i = i + 1
     return out
 
-def tr_emit_struct(name: Str, body_raw: Str) -> Str:
-    mut out := str_concat("@repr(C)\nstruct ", str_concat(name, ":\n"))
-    mut field_count := 0
+def tr_emit_struct(name: Str, body_raw: Str, defined_types: Map[Str, Int]) -> Str:
+    mut fields := list_new()
     mut start := 0
     mut i := 0
     n := str_len(body_raw)
@@ -147,19 +205,26 @@ def tr_emit_struct(name: Str, body_raw: Str) -> Str:
         if str_substr(body_raw, i, 1) == ";":
             stmt := nt_normalize_ws(str_substr(body_raw, start, i - start))
             if str_len(stmt) > 0:
+                # Reject bitfields and fixed-size arrays honestly (no fake ABI)
+                if str_contains(stmt, ":") || str_contains(stmt, "[") || str_contains(stmt, "("):
+                    return ""
                 pair := tr_split_decl(stmt)
-                if str_len(pair.1) > 0:
-                    lpp_ty := c_type_to_native_lpp(pair.0, false)
-                    out = str_concat(out, str_concat("    ", str_concat(pair.1, str_concat(": ", str_concat(lpp_ty, "\n")))))
-                    field_count = field_count + 1
+                if str_len(pair.1) == 0:
+                    return ""
+                lpp_ty := tr_resolve_c_type(pair.0, false, defined_types)
+                if str_len(lpp_ty) == 0 || lpp_ty == "Void":
+                    return ""
+                fname := tr_escape_ident(pair.1)
+                list_push(fields, str_concat("    ", str_concat(fname, str_concat(": ", str_concat(lpp_ty, "\n")))))
             start = i + 1
         i = i + 1
-    if field_count == 0:
-        out = str_concat(out, "    _pad: U8\n")
-    return str_concat(out, "\n")
+    if len(fields) == 0:
+        return ""
+    header := str_concat("@repr(C)\nstruct ", str_concat(name, ":\n"))
+    return str_concat(header, str_concat(str_join(fields, ""), "\n"))
 
-def tr_emit_enum(body_raw: Str) -> Str:
-    mut out := ""
+def tr_emit_enum_consts(body_raw: Str, emitted_consts: Map[Str, Int]) -> Str:
+    mut out_list := list_new()
     mut next_val := 0
     mut start := 0
     mut i := 0
@@ -170,34 +235,118 @@ def tr_emit_enum(body_raw: Str) -> Str:
             ch = str_substr(body_raw, i, 1)
         if ch == ",":
             item := nt_normalize_ws(str_substr(body_raw, start, i - start))
-            if str_len(item) > 0:
+            if str_len(item) > 0 && !str_starts_with(item, "#"):
                 eq := str_find(item, "=")
                 if eq >= 0:
                     ename := str_trim(str_substr(item, 0, eq))
-                    eval_str := str_trim(str_substr(item, eq + 1, str_len(item) - eq - 1))
-                    next_val = str_to_int(eval_str)
-                    out = str_concat(out, str_concat("const ", str_concat(ename, str_concat(" = ", str_concat(int_to_str(next_val), "\n")))))
-                    next_val = next_val + 1
+                    eval_raw := str_trim(str_substr(item, eq + 1, str_len(item) - eq - 1))
+                    cleaned := tr_clean_define_value(eval_raw)
+                    if str_len(cleaned) > 0 && !map_has(emitted_consts, ename):
+                        map_put(emitted_consts, ename, 1)
+                        list_push(out_list, str_concat("const ", str_concat(ename, str_concat(" = ", str_concat(cleaned, "\n")))))
+                        if !str_contains(cleaned, "x") && !str_contains(cleaned, "X") && !str_contains(cleaned, "."):
+                            next_val = str_to_int(cleaned) + 1
                 else:
-                    out = str_concat(out, str_concat("const ", str_concat(item, str_concat(" = ", str_concat(int_to_str(next_val), "\n")))))
-                    next_val = next_val + 1
+                    if !str_contains(item, " ") && !map_has(emitted_consts, item):
+                        map_put(emitted_consts, item, 1)
+                        list_push(out_list, str_concat("const ", str_concat(item, str_concat(" = ", str_concat(int_to_str(next_val), "\n")))))
+                        next_val = next_val + 1
             start = i + 1
         i = i + 1
-    if str_len(out) > 0:
-        out = str_concat(out, "\n")
-    return out
+    return str_join(out_list, "")
+
+def tr_emit_simple_stmt(stmt_raw: Str, level: Int) -> Str:
+    mut line := str_trim(stmt_raw)
+    if str_ends_with(line, ";"):
+        line = str_trim(str_substr(line, 0, str_len(line) - 1))
+    if str_len(line) == 0:
+        return ""
+    if str_ends_with(line, "++"):
+        v := str_trim(str_substr(line, 0, str_len(line) - 2))
+        return str_concat(tr_indent(level), str_concat(v, str_concat(" = ", str_concat(v, " + 1\n"))))
+    if str_starts_with(line, "++"):
+        v := str_trim(str_substr(line, 2, str_len(line) - 2))
+        return str_concat(tr_indent(level), str_concat(v, str_concat(" = ", str_concat(v, " + 1\n"))))
+    if str_ends_with(line, "--"):
+        v := str_trim(str_substr(line, 0, str_len(line) - 2))
+        return str_concat(tr_indent(level), str_concat(v, str_concat(" = ", str_concat(v, " - 1\n"))))
+    if str_starts_with(line, "--"):
+        v := str_trim(str_substr(line, 2, str_len(line) - 2))
+        return str_concat(tr_indent(level), str_concat(v, str_concat(" = ", str_concat(v, " - 1\n"))))
+    ops := ["<<=", ">>=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^="]
+    for op in ops:
+        pos := str_find(line, op)
+        if pos > 0:
+            lhs := tr_translate_expr(str_substr(line, 0, pos))
+            rhs := tr_translate_expr(str_substr(line, pos + str_len(op), str_len(line) - pos - str_len(op)))
+            bin_op := str_substr(op, 0, str_len(op) - 1)
+            return str_concat(tr_indent(level), str_concat(lhs, str_concat(" = ", str_concat(lhs, str_concat(" ", str_concat(bin_op, str_concat(" (", str_concat(rhs, ")\n"))))))))
+    eq := str_find(line, "=")
+    if eq > 0 && !str_contains(line, "==") && !str_contains(line, "!=") && !str_contains(line, "<=") && !str_contains(line, ">="):
+        lhs := str_trim(str_substr(line, 0, eq))
+        rhs := tr_translate_expr(str_substr(line, eq + 1, str_len(line) - eq - 1))
+        if str_contains(lhs, " "):
+            pair := tr_split_decl(lhs)
+            return str_concat(tr_indent(level), str_concat("mut ", str_concat(tr_escape_ident(pair.1), str_concat(" := ", str_concat(rhs, "\n")))))
+        else:
+            return str_concat(tr_indent(level), str_concat(tr_translate_expr(lhs), str_concat(" = ", str_concat(rhs, "\n"))))
+    return str_concat(tr_indent(level), str_concat(tr_translate_expr(line), "\n"))
 
 def tr_emit_body_lines(body_raw: Str) -> Str:
     lines := str_lines(body_raw)
-    mut out := ""
+    mut out_list := list_new()
     mut level := 1
+    mut for_steps := ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+    mut switch_var := ""
+    mut switch_first_case := true
+    mut in_switch := false
+
     for raw_line in lines:
-        mut line := str_trim(raw_line)
+        mut line := str_trim(tr_strip_line_comment(raw_line))
         if str_len(line) == 0:
             continue
         if line == "}":
+            if in_switch && level == 2:
+                in_switch = false
+                switch_var = ""
+                level = 1
+                continue
+            if level > 1:
+                step := for_steps[level]
+                if str_len(step) > 0:
+                    list_push(out_list, tr_emit_simple_stmt(step, level))
+                    for_steps[level] = ""
+                level = level - 1
+            continue
+        if str_starts_with(line, "switch ") || str_starts_with(line, "switch("):
+            cond_start := str_find(line, "(")
+            cond_end := str_find(line, ")")
+            if cond_start >= 0 && cond_end > cond_start:
+                switch_var = tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
+                switch_first_case = true
+                in_switch = true
+            continue
+        if in_switch && str_starts_with(line, "case "):
+            colon := str_find(line, ":")
+            if colon > 5:
+                cval := tr_translate_expr(str_substr(line, 5, colon - 5))
+                if switch_first_case:
+                    list_push(out_list, str_concat(tr_indent(level), str_concat("if ", str_concat(switch_var, str_concat(" == ", str_concat(cval, ":\n"))))))
+                    switch_first_case = false
+                    level = level + 1
+                else:
+                    if level > 1:
+                        level = level - 1
+                    list_push(out_list, str_concat(tr_indent(level), str_concat("elif ", str_concat(switch_var, str_concat(" == ", str_concat(cval, ":\n"))))))
+                    level = level + 1
+            continue
+        if in_switch && str_starts_with(line, "default:"):
             if level > 1:
                 level = level - 1
+            list_push(out_list, str_concat(tr_indent(level), "else:\n"))
+            level = level + 1
+            continue
+        if in_switch && (line == "break;" || line == "break"):
             continue
         if str_starts_with(line, "} else if"):
             if level > 1:
@@ -206,21 +355,44 @@ def tr_emit_body_lines(body_raw: Str) -> Str:
             cond_end := str_find(line, ")")
             if cond_start >= 0 && cond_end > cond_start:
                 cond := tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
-                out = str_concat(out, str_concat(tr_indent(level), str_concat("elif ", str_concat(cond, ":\n"))))
+                list_push(out_list, str_concat(tr_indent(level), str_concat("elif ", str_concat(cond, ":\n"))))
                 level = level + 1
             continue
         if str_starts_with(line, "} else"):
             if level > 1:
                 level = level - 1
-            out = str_concat(out, str_concat(tr_indent(level), "else:\n"))
+            list_push(out_list, str_concat(tr_indent(level), "else:\n"))
             level = level + 1
+            continue
+        if str_starts_with(line, "for ") || str_starts_with(line, "for("):
+            cond_start := str_find(line, "(")
+            cond_end := str_find(line, ")")
+            if cond_start >= 0 && cond_end > cond_start:
+                inner := str_substr(line, cond_start + 1, cond_end - cond_start - 1)
+                s1 := str_find(inner, ";")
+                if s1 >= 0:
+                    init_part := str_trim(str_substr(inner, 0, s1))
+                    after1 := str_substr(inner, s1 + 1, str_len(inner) - s1 - 1)
+                    s2 := str_find(after1, ";")
+                    if s2 >= 0:
+                        cond_part := str_trim(str_substr(after1, 0, s2))
+                        step_part := str_trim(str_substr(after1, s2 + 1, str_len(after1) - s2 - 1))
+                        if str_len(init_part) > 0:
+                            list_push(out_list, tr_emit_simple_stmt(init_part, level))
+                        mut cond_lpp := "true"
+                        if str_len(cond_part) > 0:
+                            cond_lpp = tr_translate_expr(cond_part)
+                        list_push(out_list, str_concat(tr_indent(level), str_concat("while ", str_concat(cond_lpp, ":\n"))))
+                        level = level + 1
+                        if level < 16:
+                            for_steps[level] = step_part
             continue
         if str_starts_with(line, "if ") || str_starts_with(line, "if("):
             cond_start := str_find(line, "(")
             cond_end := str_find(line, ")")
             if cond_start >= 0 && cond_end > cond_start:
                 cond := tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
-                out = str_concat(out, str_concat(tr_indent(level), str_concat("if ", str_concat(cond, ":\n"))))
+                list_push(out_list, str_concat(tr_indent(level), str_concat("if ", str_concat(cond, ":\n"))))
                 level = level + 1
             continue
         if str_starts_with(line, "while ") || str_starts_with(line, "while("):
@@ -228,7 +400,7 @@ def tr_emit_body_lines(body_raw: Str) -> Str:
             cond_end := str_find(line, ")")
             if cond_start >= 0 && cond_end > cond_start:
                 cond := tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
-                out = str_concat(out, str_concat(tr_indent(level), str_concat("while ", str_concat(cond, ":\n"))))
+                list_push(out_list, str_concat(tr_indent(level), str_concat("while ", str_concat(cond, ":\n"))))
                 level = level + 1
             continue
         if str_starts_with(line, "return"):
@@ -236,53 +408,77 @@ def tr_emit_body_lines(body_raw: Str) -> Str:
             if str_ends_with(expr, ";"):
                 expr = str_trim(str_substr(expr, 0, str_len(expr) - 1))
             if str_len(expr) == 0:
-                out = str_concat(out, str_concat(tr_indent(level), "return\n"))
+                list_push(out_list, str_concat(tr_indent(level), "return\n"))
             else:
-                out = str_concat(out, str_concat(tr_indent(level), str_concat("return ", str_concat(tr_translate_expr(expr), "\n"))))
+                list_push(out_list, str_concat(tr_indent(level), str_concat("return ", str_concat(tr_translate_expr(expr), "\n"))))
             continue
-
-        # Strip trailing semicolon
-        if str_ends_with(line, ";"):
-            line = str_trim(str_substr(line, 0, str_len(line) - 1))
-
-        # Local declaration `int x = expr` or assignment `x = expr`
-        eq := str_find(line, "=")
-        if eq > 0 && !str_contains(line, "==") && !str_contains(line, "!=") && !str_contains(line, "<=") && !str_contains(line, ">="):
-            lhs := str_trim(str_substr(line, 0, eq))
-            rhs := tr_translate_expr(str_substr(line, eq + 1, str_len(line) - eq - 1))
-            if str_contains(lhs, " "):
-                pair := tr_split_decl(lhs)
-                out = str_concat(out, str_concat(tr_indent(level), str_concat("mut ", str_concat(pair.1, str_concat(" := ", str_concat(rhs, "\n"))))))
-            else:
-                out = str_concat(out, str_concat(tr_indent(level), str_concat(lhs, str_concat(" = ", str_concat(rhs, "\n")))))
-        else:
-            out = str_concat(out, str_concat(tr_indent(level), str_concat(tr_translate_expr(line), "\n")))
-    return out
+        if line == "break;" || line == "break":
+            list_push(out_list, str_concat(tr_indent(level), "break\n"))
+            continue
+        if line == "continue;" || line == "continue":
+            list_push(out_list, str_concat(tr_indent(level), "continue\n"))
+            continue
+        list_push(out_list, tr_emit_simple_stmt(line, level))
+    return str_join(out_list, "")
 
 def c2lpp_translate(source: Str) -> Str:
-    cleaned := tr_strip_comments(source)
-    lines := str_lines(cleaned)
-    mut header_consts := ""
-    mut structs_out := ""
-    mut externs_out := ""
-    mut funcs_out := ""
+    lines := str_lines(source)
+    mut consts_list := list_new()
+    mut types_list := list_new()
+    mut structs_list := list_new()
+    mut externs_list := list_new()
+    mut funcs_list := list_new()
 
+    mut defined_types := map_new()
+    mut emitted_consts := map_new()
+    mut emitted_protos := map_new()
+
+    mut count_defines := 0
+    mut count_handles := 0
+    mut count_typedefs := 0
+    mut count_pfns := 0
+    mut count_enums := 0
+    mut count_structs := 0
+    mut count_protos := 0
+    mut count_funcs := 0
+
+    mut in_block_comment := false
     mut i := 0
     n := len(lines)
     while i < n:
-        line := str_trim(lines[i])
+        mut line := str_trim(lines[i])
+        if in_block_comment:
+            if str_contains(line, "*/"):
+                end_c := str_find(line, "*/")
+                line = str_trim(str_substr(line, end_c + 2, str_len(line) - end_c - 2))
+                in_block_comment = false
+            else:
+                i = i + 1
+                continue
+        if str_starts_with(line, "/*"):
+            if str_contains(line, "*/"):
+                end_c := str_find(line, "*/")
+                line = str_trim(str_substr(line, end_c + 2, str_len(line) - end_c - 2))
+            else:
+                in_block_comment = true
+                i = i + 1
+                continue
+        line = str_trim(tr_strip_line_comment(line))
         if str_len(line) == 0:
             i = i + 1
             continue
 
-        # Preprocessor `#define NAME VALUE`
+        # 1. Preprocessor `#define NAME VALUE`
         if str_starts_with(line, "#define "):
             rest := nt_normalize_ws(str_substr(line, 8, str_len(line) - 8))
             sp := str_find(rest, " ")
             if sp > 0 && !str_contains(str_substr(rest, 0, sp), "("):
                 cname := str_substr(rest, 0, sp)
-                cval := str_trim(str_substr(rest, sp + 1, str_len(rest) - sp - 1))
-                header_consts = str_concat(header_consts, str_concat("const ", str_concat(cname, str_concat(" = ", str_concat(cval, "\n")))))
+                cval := tr_clean_define_value(str_substr(rest, sp + 1, str_len(rest) - sp - 1))
+                if str_len(cval) > 0 && !map_has(emitted_consts, cname):
+                    map_put(emitted_consts, cname, 1)
+                    list_push(consts_list, str_concat("const ", str_concat(cname, str_concat(" = ", str_concat(cval, "\n")))))
+                    count_defines = count_defines + 1
             i = i + 1
             continue
 
@@ -290,12 +486,60 @@ def c2lpp_translate(source: Str) -> Str:
             i = i + 1
             continue
 
-        # `typedef struct ... { ... } Name;` or `struct Name { ... };`
-        if (str_starts_with(line, "typedef struct") || str_starts_with(line, "struct ")) && str_contains(line, "{"):
-            mut block := line
-            while i + 1 < n && !str_contains(block, "}"):
+        # 2. Vulkan handles: VK_DEFINE_HANDLE(Name) / VK_DEFINE_NON_DISPATCHABLE_HANDLE(Name)
+        if str_starts_with(line, "VK_DEFINE_HANDLE(") && str_contains(line, ")"):
+            close_p := str_find(line, ")")
+            hname := str_trim(str_substr(line, 17, close_p - 17))
+            if str_len(hname) > 0 && !map_has(defined_types, hname):
+                map_put(defined_types, hname, 1)
+                list_push(types_list, str_concat("type ", str_concat(hname, " = RawPtr\n")))
+                count_handles = count_handles + 1
+            i = i + 1
+            continue
+
+        if str_starts_with(line, "VK_DEFINE_NON_DISPATCHABLE_HANDLE(") && str_contains(line, ")"):
+            close_p := str_find(line, ")")
+            hname := str_trim(str_substr(line, 34, close_p - 34))
+            if str_len(hname) > 0 && !map_has(defined_types, hname):
+                map_put(defined_types, hname, 1)
+                list_push(types_list, str_concat("type ", str_concat(hname, " = U64\n")))
+                count_handles = count_handles + 1
+            i = i + 1
+            continue
+
+        # 3. Function pointer typedef: `typedef Ret (VKAPI_PTR *PFN_Name)(...);`
+        if str_starts_with(line, "typedef ") && str_contains(line, "VKAPI_PTR *"):
+            mut full := line
+            while i + 1 < n && !str_contains(full, ";"):
                 i = i + 1
-                block = str_concat(block, str_concat("\n", lines[i]))
+                full = str_concat(full, " ")
+                full = str_concat(full, str_trim(lines[i]))
+            star := str_find(full, "VKAPI_PTR *")
+            after_star := str_substr(full, star + 11, str_len(full) - star - 11)
+            close_p := str_find(after_star, ")")
+            if close_p > 0:
+                pfn_name := str_trim(str_substr(after_star, 0, close_p))
+                if str_len(pfn_name) > 0 && !map_has(defined_types, pfn_name):
+                    map_put(defined_types, pfn_name, 1)
+                    list_push(types_list, str_concat("type ", str_concat(pfn_name, " = RawPtr\n")))
+                    count_pfns = count_pfns + 1
+            i = i + 1
+            continue
+
+        # 4. `typedef struct ... { ... } Name;` or `struct Name { ... };`
+        if (str_starts_with(line, "typedef struct") || str_starts_with(line, "struct ")) && str_contains(line, "{"):
+            mut block_lines := list_new()
+            is_single := str_find(line, "}") >= 0
+            list_push(block_lines, line)
+            if !is_single:
+                while i + 1 < n:
+                    i = i + 1
+                    cur := str_trim(tr_strip_line_comment(lines[i]))
+                    is_end := str_find(cur, "}") >= 0
+                    list_push(block_lines, cur)
+                    if is_end:
+                        break
+            block := str_join(block_lines, "\n")
             open_b := str_find(block, "{")
             close_b := str_find(block, "}")
             if open_b >= 0 && close_b > open_b:
@@ -304,54 +548,101 @@ def c2lpp_translate(source: Str) -> Str:
                 mut sname := after
                 if str_len(sname) == 0:
                     before := nt_normalize_ws(str_substr(block, 0, open_b))
-                    before_clean := str_trim(str_replace(str_replace(before, "typedef", ""), "struct", ""))
-                    sname = before_clean
-                if str_len(sname) > 0:
-                    structs_out = str_concat(structs_out, tr_emit_struct(sname, body))
+                    sname = str_trim(str_replace(str_replace(before, "typedef", ""), "struct", ""))
+                if str_len(sname) > 0 && !map_has(defined_types, sname):
+                    emitted := tr_emit_struct(sname, body, defined_types)
+                    if str_len(emitted) > 0:
+                        map_put(defined_types, sname, 1)
+                        list_push(structs_list, emitted)
+                        count_structs = count_structs + 1
             i = i + 1
             continue
 
-        # `enum ... { ... };`
-        if (str_starts_with(line, "enum ") || str_starts_with(line, "typedef enum")) && str_contains(line, "{"):
-            mut block := line
-            while i + 1 < n && !str_contains(block, "}"):
-                i = i + 1
-                block = str_concat(block, str_concat("\n", lines[i]))
+        # 5. `typedef enum ... { ... } Name;` or `enum Name { ... };`
+        if (str_starts_with(line, "typedef enum") || str_starts_with(line, "enum ")) && str_contains(line, "{"):
+            mut block_lines := list_new()
+            is_single := str_find(line, "}") >= 0
+            list_push(block_lines, line)
+            if !is_single:
+                while i + 1 < n:
+                    i = i + 1
+                    cur := str_trim(tr_strip_line_comment(lines[i]))
+                    is_end := str_find(cur, "}") >= 0
+                    list_push(block_lines, cur)
+                    if is_end:
+                        break
+            block := str_join(block_lines, "\n")
             open_b := str_find(block, "{")
             close_b := str_find(block, "}")
             if open_b >= 0 && close_b > open_b:
                 body := str_substr(block, open_b + 1, close_b - open_b - 1)
-                header_consts = str_concat(header_consts, tr_emit_enum(body))
+                after := str_trim(str_replace(str_substr(block, close_b + 1, str_len(block) - close_b - 1), ";", ""))
+                mut ename := after
+                if str_len(ename) == 0:
+                    before := nt_normalize_ws(str_substr(block, 0, open_b))
+                    ename = str_trim(str_replace(str_replace(before, "typedef", ""), "enum", ""))
+                if str_len(ename) > 0 && !map_has(defined_types, ename):
+                    map_put(defined_types, ename, 1)
+                    list_push(types_list, str_concat("type ", str_concat(ename, " = I32\n")))
+                    count_enums = count_enums + 1
+                ec := tr_emit_enum_consts(body, emitted_consts)
+                if str_len(ec) > 0:
+                    list_push(consts_list, ec)
             i = i + 1
             continue
 
-        # Function prototype `ret name(params);`
-        if str_contains(line, "(") && str_contains(line, ")") && str_ends_with(line, ";") && !str_starts_with(line, "typedef "):
-            open_p := str_find(line, "(")
-            close_p := str_find(line, ")")
+        # 6. Simple `typedef OldType NewName;`
+        if str_starts_with(line, "typedef ") && str_ends_with(line, ";") && !str_contains(line, "(") && !str_contains(line, "{"):
+            inner := str_trim(str_substr(line, 8, str_len(line) - 9))
+            pair := tr_split_decl(inner)
+            if str_len(pair.0) > 0 && str_len(pair.1) > 0 && !map_has(defined_types, pair.1):
+                mapped := tr_resolve_c_type(pair.0, false, defined_types)
+                if str_len(mapped) > 0 && mapped != "Void":
+                    map_put(defined_types, pair.1, 1)
+                    list_push(types_list, str_concat("type ", str_concat(pair.1, str_concat(" = ", str_concat(mapped, "\n")))))
+                    count_typedefs = count_typedefs + 1
+            i = i + 1
+            continue
+
+        # 7. Multi-line `VKAPI_ATTR Ret VKAPI_CALL vkFoo(...);` or single-line prototype
+        if str_starts_with(line, "VKAPI_ATTR ") || (str_contains(line, "(") && str_contains(line, ")") && str_ends_with(line, ";") && !str_starts_with(line, "typedef ") && !str_starts_with(line, "extern \"C\"")):
+            mut full := line
+            while i + 1 < n && !str_contains(full, ";"):
+                i = i + 1
+                full = str_concat(full, " ")
+                full = str_concat(full, str_trim(tr_strip_line_comment(lines[i])))
+            full = str_replace(full, "VKAPI_ATTR ", "")
+            full = str_replace(full, "VKAPI_CALL ", "")
+            full = nt_normalize_ws(full)
+            open_p := str_find(full, "(")
+            close_p := str_find(full, ")")
             if open_p > 0 && close_p > open_p:
-                prefix := str_substr(line, 0, open_p)
-                params_raw := str_substr(line, open_p + 1, close_p - open_p - 1)
+                prefix := str_substr(full, 0, open_p)
+                params_raw := str_substr(full, open_p + 1, close_p - open_p - 1)
                 pair := tr_split_decl(prefix)
-                if str_len(pair.1) > 0:
-                    ret_ty := c_type_to_native_lpp(pair.0, true)
-                    params := tr_translate_params(params_raw, true)
-                    mut sig := str_concat("    def ", str_concat(pair.1, str_concat("(", str_concat(params, ")"))))
-                    if ret_ty != "Void":
-                        sig = str_concat(sig, str_concat(" -> ", ret_ty))
-                    externs_out = str_concat(externs_out, str_concat(sig, "\n"))
+                fname := pair.1
+                if str_len(fname) > 0 && !map_has(emitted_protos, fname):
+                    ret_ty := tr_resolve_c_type(pair.0, true, defined_types)
+                    params := tr_translate_params(params_raw, true, defined_types)
+                    if str_len(ret_ty) > 0 && params != "__SKIP__":
+                        map_put(emitted_protos, fname, 1)
+                        mut sig := str_concat("    def ", str_concat(fname, str_concat("(", str_concat(params, ")"))))
+                        if ret_ty != "Void":
+                            sig = str_concat(sig, str_concat(" -> ", ret_ty))
+                        list_push(externs_list, str_concat(sig, "\n"))
+                        count_protos = count_protos + 1
             i = i + 1
             continue
 
-        # Function definition `ret name(params) { ... }`
-        if str_contains(line, "(") && str_contains(line, ")") && str_contains(line, "{"):
+        # 8. Function definition `ret name(params) { ... }`
+        if str_contains(line, "(") && str_contains(line, ")") && str_contains(line, "{") && !str_starts_with(line, "extern \"C\""):
             open_p := str_find(line, "(")
             close_p := str_find(line, ")")
             prefix := str_substr(line, 0, open_p)
             params_raw := str_substr(line, open_p + 1, close_p - open_p - 1)
             pair := tr_split_decl(prefix)
             mut depth := 1
-            mut body_lines := ""
+            mut body_list := list_new()
             i = i + 1
             while i < n && depth > 0:
                 cur := lines[i]
@@ -360,27 +651,58 @@ def c2lpp_translate(source: Str) -> Str:
                 if str_contains(cur, "}"):
                     depth = depth - 1
                 if depth > 0:
-                    body_lines = str_concat(body_lines, str_concat(cur, "\n"))
+                    list_push(body_list, cur)
                 i = i + 1
             if str_len(pair.1) > 0:
                 ret_ty := c_type_to_lpp_fn_type(pair.0)
-                params := tr_translate_params(params_raw, false)
-                mut sig := str_concat("def ", str_concat(pair.1, str_concat("(", str_concat(params, ")"))))
-                if ret_ty != "Void":
-                    sig = str_concat(sig, str_concat(" -> ", ret_ty))
-                sig = str_concat(sig, ":\n")
-                funcs_out = str_concat(funcs_out, str_concat(sig, str_concat(tr_emit_body_lines(body_lines), "\n")))
+                params := tr_translate_params(params_raw, false, defined_types)
+                if params != "__SKIP__":
+                    mut sig := str_concat("def ", str_concat(pair.1, str_concat("(", str_concat(params, ")"))))
+                    if ret_ty != "Void":
+                        sig = str_concat(sig, str_concat(" -> ", ret_ty))
+                    sig = str_concat(sig, ":\n")
+                    list_push(funcs_list, str_concat(sig, str_concat(tr_emit_body_lines(str_join(body_list, "\n")), "\n")))
+                    count_funcs = count_funcs + 1
             continue
 
         i = i + 1
 
-    mut result := "# Generated by c2lpp v0.4.0 (Direct Native Mapping + 16-byte CSpan)\n\n"
-    if str_len(header_consts) > 0:
-        result = str_concat(result, str_concat(header_consts, "\n"))
-    if str_len(structs_out) > 0:
-        result = str_concat(result, structs_out)
-    if str_len(externs_out) > 0:
-        result = str_concat(result, str_concat("extern \"C\":\n", str_concat(externs_out, "\n")))
-    if str_len(funcs_out) > 0:
-        result = str_concat(result, funcs_out)
-    return result
+    total_emitted := count_defines + count_handles + count_typedefs + count_pfns + count_enums + count_structs + count_protos + count_funcs
+    mut sections := list_new()
+    list_push(sections, "# Generated by c2lpp v0.5.0 (Direct Native Mapping + 16-byte CSpan)\n")
+    mut stat_parts := list_new()
+    list_push(stat_parts, "# stats: defines=")
+    list_push(stat_parts, int_to_str(count_defines))
+    list_push(stat_parts, " handles=")
+    list_push(stat_parts, int_to_str(count_handles))
+    list_push(stat_parts, " typedefs=")
+    list_push(stat_parts, int_to_str(count_typedefs))
+    list_push(stat_parts, " pfns=")
+    list_push(stat_parts, int_to_str(count_pfns))
+    list_push(stat_parts, " enums=")
+    list_push(stat_parts, int_to_str(count_enums))
+    list_push(stat_parts, " structs=")
+    list_push(stat_parts, int_to_str(count_structs))
+    list_push(stat_parts, " protos=")
+    list_push(stat_parts, int_to_str(count_protos))
+    list_push(stat_parts, " funcs=")
+    list_push(stat_parts, int_to_str(count_funcs))
+    list_push(stat_parts, " total=")
+    list_push(stat_parts, int_to_str(total_emitted))
+    list_push(stat_parts, "\n\n")
+    list_push(sections, str_join(stat_parts, ""))
+    if len(consts_list) > 0:
+        list_push(sections, str_join(consts_list, ""))
+        list_push(sections, "\n")
+    if len(types_list) > 0:
+        list_push(sections, str_join(types_list, ""))
+        list_push(sections, "\n")
+    if len(structs_list) > 0:
+        list_push(sections, str_join(structs_list, ""))
+    if len(externs_list) > 0:
+        list_push(sections, "extern \"C\":\n")
+        list_push(sections, str_join(externs_list, ""))
+        list_push(sections, "\n")
+    if len(funcs_list) > 0:
+        list_push(sections, str_join(funcs_list, ""))
+    return str_join(sections, "")

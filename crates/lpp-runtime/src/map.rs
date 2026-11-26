@@ -83,15 +83,18 @@ unsafe extern "C" fn map_destroy(payload: *mut c_void) {
         return;
     }
     let m = unsafe { &mut *(payload as *mut LppMap) };
-    if m.arc_values != 0 && !m.entries.is_null() {
+    if !m.entries.is_null() {
         for i in 0..m.cap {
             let e = unsafe { &*entry_at(m, i) };
             if e.occupied == OCCUPIED_LIVE {
-                unsafe { lpp_arc_release(e.val as *mut c_void) };
+                if e.is_str_key != 0 {
+                    unsafe { lpp_arc_release(e.key as *mut c_void) };
+                }
+                if m.arc_values != 0 {
+                    unsafe { lpp_arc_release(e.val as *mut c_void) };
+                }
             }
         }
-    }
-    if !m.entries.is_null() {
         unsafe { free(m.entries.cast::<c_void>()) };
     }
     m.entries = std::ptr::null_mut();
@@ -246,6 +249,9 @@ unsafe fn put_internal(m: *mut LppMap, key: i64, val: i64, is_str: i32) {
         idx = first_tombstone;
     }
 
+    if is_str != 0 {
+        unsafe { lpp_arc_retain(key as *mut c_void) };
+    }
     if m.arc_values != 0 {
         unsafe { lpp_arc_retain(val as *mut c_void) };
     }
@@ -494,6 +500,7 @@ pub unsafe extern "C" fn lpp_map_remove_str(map: *mut c_void, key: *const c_char
             && e.is_str_key == 1
             && unsafe { strcmp(e.key as *const c_char, key) == 0 }
         {
+            unsafe { lpp_arc_release(e.key as *mut c_void) };
             if m.arc_values != 0 {
                 unsafe { lpp_arc_release(e.val as *mut c_void) };
             }

@@ -72,7 +72,7 @@ def run_selftest() -> Int:
         print_str("FAIL: missing translated sum_pair")
         return 1
 
-    print_str("c2lpp v0.4.0 selftest OK (CSpan=16B, FastHandle=8B, direct native mapping)")
+    print_str("c2lpp v0.5.0 selftest OK (CSpan=16B, FastHandle=8B, direct native mapping)")
     return 0
 
 def run_bench() -> Int:
