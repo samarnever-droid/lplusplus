@@ -1,0 +1,386 @@
+# translator.lpp — Direct Native C Header & Source Translator (c2lpp v0.4.0)
+#
+# Translates C declarations and functions directly to zero-overhead native L++:
+# - `#define NAME VAL`          -> `const NAME = VAL`
+# - `struct S { ... };`         -> `@repr(C)` struct with exact native field types
+# - `typedef struct { ... } S;` -> `@repr(C)` struct with exact native field types
+# - `enum E { A, B = 5, C };`   -> `const A = 0`, `const B = 5`, `const C = 6`
+# - `ret fn(params);`           -> `extern "C": def fn(params) -> Ret`
+# - `ret fn(params) { body }`   -> pure L++ `def fn(params) -> Ret:`
+
+import native_types
+
+def tr_strip_comments(source: Str) -> Str:
+    mut out := ""
+    mut i := 0
+    n := str_len(source)
+    mut in_str := false
+    mut in_line_comment := false
+    mut in_block_comment := false
+    while i < n:
+        ch := str_substr(source, i, 1)
+        mut next := ""
+        if i + 1 < n:
+            next = str_substr(source, i + 1, 1)
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = false
+                out = str_concat(out, "\n")
+            i = i + 1
+        elif in_block_comment:
+            if ch == "*" && next == "/":
+                in_block_comment = false
+                i = i + 2
+            else:
+                if ch == "\n":
+                    out = str_concat(out, "\n")
+                i = i + 1
+        elif in_str:
+            out = str_concat(out, ch)
+            if ch == "\\" && i + 1 < n:
+                out = str_concat(out, next)
+                i = i + 2
+            else:
+                if ch == "\"":
+                    in_str = false
+                i = i + 1
+        else:
+            if ch == "\"":
+                in_str = true
+                out = str_concat(out, ch)
+                i = i + 1
+            elif ch == "/" && next == "/":
+                in_line_comment = true
+                i = i + 2
+            elif ch == "/" && next == "*":
+                in_block_comment = true
+                i = i + 2
+            else:
+                out = str_concat(out, ch)
+                i = i + 1
+    return out
+
+def tr_last_space_idx(s: Str) -> Int:
+    mut i := str_len(s) - 1
+    while i >= 0:
+        if str_substr(s, i, 1) == " ":
+            return i
+        i = i - 1
+    return -1
+
+def tr_split_decl(decl_raw: Str) -> (Str, Str):
+    # Split `"const int *foo"` -> `("const int *", "foo")`
+    s := nt_normalize_ws(decl_raw)
+    if str_len(s) == 0:
+        return ("", "")
+    # Find last space or `*` before the identifier name
+    mut idx := str_len(s) - 1
+    while idx >= 0:
+        ch := str_substr(s, idx, 1)
+        if ch == " " || ch == "*":
+            break
+        idx = idx - 1
+    if idx < 0:
+        return (s, "")
+    ty := str_trim(str_substr(s, 0, idx + 1))
+    name := str_trim(str_substr(s, idx + 1, str_len(s) - idx - 1))
+    return (ty, name)
+
+def tr_translate_params(params_raw: Str, is_extern: Bool) -> Str:
+    trimmed := str_trim(params_raw)
+    if str_len(trimmed) == 0 || trimmed == "void":
+        return ""
+    mut out := ""
+    mut start := 0
+    mut i := 0
+    mut depth := 0
+    mut param_idx := 0
+    n := str_len(trimmed)
+    while i <= n:
+        mut ch := ","
+        if i < n:
+            ch = str_substr(trimmed, i, 1)
+        if ch == "(":
+            depth = depth + 1
+        elif ch == ")":
+            depth = depth - 1
+        elif ch == "," && depth == 0:
+            piece := str_trim(str_substr(trimmed, start, i - start))
+            if str_len(piece) > 0 && piece != "...":
+                pair := tr_split_decl(piece)
+                c_ty := pair.0
+                mut p_name := pair.1
+                if str_len(p_name) == 0:
+                    p_name = str_concat("arg", int_to_str(param_idx))
+                mut lpp_ty := c_type_to_lpp_fn_type(c_ty)
+                if is_extern:
+                    lpp_ty = c_type_to_native_lpp(c_ty, true)
+                if param_idx > 0:
+                    out = str_concat(out, ", ")
+                out = str_concat(out, str_concat(p_name, str_concat(": ", lpp_ty)))
+                param_idx = param_idx + 1
+            start = i + 1
+        i = i + 1
+    return out
+
+def tr_translate_expr(raw: Str) -> Str:
+    mut e := str_trim(raw)
+    e = str_replace(e, "NULL", "0")
+    e = str_replace(e, "->", ".")
+    return e
+
+def tr_indent(level: Int) -> Str:
+    mut out := ""
+    mut i := 0
+    while i < level:
+        out = str_concat(out, "    ")
+        i = i + 1
+    return out
+
+def tr_emit_struct(name: Str, body_raw: Str) -> Str:
+    mut out := str_concat("@repr(C)\nstruct ", str_concat(name, ":\n"))
+    mut field_count := 0
+    mut start := 0
+    mut i := 0
+    n := str_len(body_raw)
+    while i < n:
+        if str_substr(body_raw, i, 1) == ";":
+            stmt := nt_normalize_ws(str_substr(body_raw, start, i - start))
+            if str_len(stmt) > 0:
+                pair := tr_split_decl(stmt)
+                if str_len(pair.1) > 0:
+                    lpp_ty := c_type_to_native_lpp(pair.0, false)
+                    out = str_concat(out, str_concat("    ", str_concat(pair.1, str_concat(": ", str_concat(lpp_ty, "\n")))))
+                    field_count = field_count + 1
+            start = i + 1
+        i = i + 1
+    if field_count == 0:
+        out = str_concat(out, "    _pad: U8\n")
+    return str_concat(out, "\n")
+
+def tr_emit_enum(body_raw: Str) -> Str:
+    mut out := ""
+    mut next_val := 0
+    mut start := 0
+    mut i := 0
+    n := str_len(body_raw)
+    while i <= n:
+        mut ch := ","
+        if i < n:
+            ch = str_substr(body_raw, i, 1)
+        if ch == ",":
+            item := nt_normalize_ws(str_substr(body_raw, start, i - start))
+            if str_len(item) > 0:
+                eq := str_find(item, "=")
+                if eq >= 0:
+                    ename := str_trim(str_substr(item, 0, eq))
+                    eval_str := str_trim(str_substr(item, eq + 1, str_len(item) - eq - 1))
+                    next_val = str_to_int(eval_str)
+                    out = str_concat(out, str_concat("const ", str_concat(ename, str_concat(" = ", str_concat(int_to_str(next_val), "\n")))))
+                    next_val = next_val + 1
+                else:
+                    out = str_concat(out, str_concat("const ", str_concat(item, str_concat(" = ", str_concat(int_to_str(next_val), "\n")))))
+                    next_val = next_val + 1
+            start = i + 1
+        i = i + 1
+    if str_len(out) > 0:
+        out = str_concat(out, "\n")
+    return out
+
+def tr_emit_body_lines(body_raw: Str) -> Str:
+    lines := str_lines(body_raw)
+    mut out := ""
+    mut level := 1
+    for raw_line in lines:
+        mut line := str_trim(raw_line)
+        if str_len(line) == 0:
+            continue
+        if line == "}":
+            if level > 1:
+                level = level - 1
+            continue
+        if str_starts_with(line, "} else if"):
+            if level > 1:
+                level = level - 1
+            cond_start := str_find(line, "(")
+            cond_end := str_find(line, ")")
+            if cond_start >= 0 && cond_end > cond_start:
+                cond := tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
+                out = str_concat(out, str_concat(tr_indent(level), str_concat("elif ", str_concat(cond, ":\n"))))
+                level = level + 1
+            continue
+        if str_starts_with(line, "} else"):
+            if level > 1:
+                level = level - 1
+            out = str_concat(out, str_concat(tr_indent(level), "else:\n"))
+            level = level + 1
+            continue
+        if str_starts_with(line, "if ") || str_starts_with(line, "if("):
+            cond_start := str_find(line, "(")
+            cond_end := str_find(line, ")")
+            if cond_start >= 0 && cond_end > cond_start:
+                cond := tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
+                out = str_concat(out, str_concat(tr_indent(level), str_concat("if ", str_concat(cond, ":\n"))))
+                level = level + 1
+            continue
+        if str_starts_with(line, "while ") || str_starts_with(line, "while("):
+            cond_start := str_find(line, "(")
+            cond_end := str_find(line, ")")
+            if cond_start >= 0 && cond_end > cond_start:
+                cond := tr_translate_expr(str_substr(line, cond_start + 1, cond_end - cond_start - 1))
+                out = str_concat(out, str_concat(tr_indent(level), str_concat("while ", str_concat(cond, ":\n"))))
+                level = level + 1
+            continue
+        if str_starts_with(line, "return"):
+            mut expr := str_trim(str_substr(line, 6, str_len(line) - 6))
+            if str_ends_with(expr, ";"):
+                expr = str_trim(str_substr(expr, 0, str_len(expr) - 1))
+            if str_len(expr) == 0:
+                out = str_concat(out, str_concat(tr_indent(level), "return\n"))
+            else:
+                out = str_concat(out, str_concat(tr_indent(level), str_concat("return ", str_concat(tr_translate_expr(expr), "\n"))))
+            continue
+
+        # Strip trailing semicolon
+        if str_ends_with(line, ";"):
+            line = str_trim(str_substr(line, 0, str_len(line) - 1))
+
+        # Local declaration `int x = expr` or assignment `x = expr`
+        eq := str_find(line, "=")
+        if eq > 0 && !str_contains(line, "==") && !str_contains(line, "!=") && !str_contains(line, "<=") && !str_contains(line, ">="):
+            lhs := str_trim(str_substr(line, 0, eq))
+            rhs := tr_translate_expr(str_substr(line, eq + 1, str_len(line) - eq - 1))
+            if str_contains(lhs, " "):
+                pair := tr_split_decl(lhs)
+                out = str_concat(out, str_concat(tr_indent(level), str_concat("mut ", str_concat(pair.1, str_concat(" := ", str_concat(rhs, "\n"))))))
+            else:
+                out = str_concat(out, str_concat(tr_indent(level), str_concat(lhs, str_concat(" = ", str_concat(rhs, "\n")))))
+        else:
+            out = str_concat(out, str_concat(tr_indent(level), str_concat(tr_translate_expr(line), "\n")))
+    return out
+
+def c2lpp_translate(source: Str) -> Str:
+    cleaned := tr_strip_comments(source)
+    lines := str_lines(cleaned)
+    mut header_consts := ""
+    mut structs_out := ""
+    mut externs_out := ""
+    mut funcs_out := ""
+
+    mut i := 0
+    n := len(lines)
+    while i < n:
+        line := str_trim(lines[i])
+        if str_len(line) == 0:
+            i = i + 1
+            continue
+
+        # Preprocessor `#define NAME VALUE`
+        if str_starts_with(line, "#define "):
+            rest := nt_normalize_ws(str_substr(line, 8, str_len(line) - 8))
+            sp := str_find(rest, " ")
+            if sp > 0 && !str_contains(str_substr(rest, 0, sp), "("):
+                cname := str_substr(rest, 0, sp)
+                cval := str_trim(str_substr(rest, sp + 1, str_len(rest) - sp - 1))
+                header_consts = str_concat(header_consts, str_concat("const ", str_concat(cname, str_concat(" = ", str_concat(cval, "\n")))))
+            i = i + 1
+            continue
+
+        if str_starts_with(line, "#"):
+            i = i + 1
+            continue
+
+        # `typedef struct ... { ... } Name;` or `struct Name { ... };`
+        if (str_starts_with(line, "typedef struct") || str_starts_with(line, "struct ")) && str_contains(line, "{"):
+            mut block := line
+            while i + 1 < n && !str_contains(block, "}"):
+                i = i + 1
+                block = str_concat(block, str_concat("\n", lines[i]))
+            open_b := str_find(block, "{")
+            close_b := str_find(block, "}")
+            if open_b >= 0 && close_b > open_b:
+                body := str_substr(block, open_b + 1, close_b - open_b - 1)
+                after := str_trim(str_replace(str_substr(block, close_b + 1, str_len(block) - close_b - 1), ";", ""))
+                mut sname := after
+                if str_len(sname) == 0:
+                    before := nt_normalize_ws(str_substr(block, 0, open_b))
+                    before_clean := str_trim(str_replace(str_replace(before, "typedef", ""), "struct", ""))
+                    sname = before_clean
+                if str_len(sname) > 0:
+                    structs_out = str_concat(structs_out, tr_emit_struct(sname, body))
+            i = i + 1
+            continue
+
+        # `enum ... { ... };`
+        if (str_starts_with(line, "enum ") || str_starts_with(line, "typedef enum")) && str_contains(line, "{"):
+            mut block := line
+            while i + 1 < n && !str_contains(block, "}"):
+                i = i + 1
+                block = str_concat(block, str_concat("\n", lines[i]))
+            open_b := str_find(block, "{")
+            close_b := str_find(block, "}")
+            if open_b >= 0 && close_b > open_b:
+                body := str_substr(block, open_b + 1, close_b - open_b - 1)
+                header_consts = str_concat(header_consts, tr_emit_enum(body))
+            i = i + 1
+            continue
+
+        # Function prototype `ret name(params);`
+        if str_contains(line, "(") && str_contains(line, ")") && str_ends_with(line, ";") && !str_starts_with(line, "typedef "):
+            open_p := str_find(line, "(")
+            close_p := str_find(line, ")")
+            if open_p > 0 && close_p > open_p:
+                prefix := str_substr(line, 0, open_p)
+                params_raw := str_substr(line, open_p + 1, close_p - open_p - 1)
+                pair := tr_split_decl(prefix)
+                if str_len(pair.1) > 0:
+                    ret_ty := c_type_to_native_lpp(pair.0, true)
+                    params := tr_translate_params(params_raw, true)
+                    mut sig := str_concat("    def ", str_concat(pair.1, str_concat("(", str_concat(params, ")"))))
+                    if ret_ty != "Void":
+                        sig = str_concat(sig, str_concat(" -> ", ret_ty))
+                    externs_out = str_concat(externs_out, str_concat(sig, "\n"))
+            i = i + 1
+            continue
+
+        # Function definition `ret name(params) { ... }`
+        if str_contains(line, "(") && str_contains(line, ")") && str_contains(line, "{"):
+            open_p := str_find(line, "(")
+            close_p := str_find(line, ")")
+            prefix := str_substr(line, 0, open_p)
+            params_raw := str_substr(line, open_p + 1, close_p - open_p - 1)
+            pair := tr_split_decl(prefix)
+            mut depth := 1
+            mut body_lines := ""
+            i = i + 1
+            while i < n && depth > 0:
+                cur := lines[i]
+                if str_contains(cur, "{"):
+                    depth = depth + 1
+                if str_contains(cur, "}"):
+                    depth = depth - 1
+                if depth > 0:
+                    body_lines = str_concat(body_lines, str_concat(cur, "\n"))
+                i = i + 1
+            if str_len(pair.1) > 0:
+                ret_ty := c_type_to_lpp_fn_type(pair.0)
+                params := tr_translate_params(params_raw, false)
+                mut sig := str_concat("def ", str_concat(pair.1, str_concat("(", str_concat(params, ")"))))
+                if ret_ty != "Void":
+                    sig = str_concat(sig, str_concat(" -> ", ret_ty))
+                sig = str_concat(sig, ":\n")
+                funcs_out = str_concat(funcs_out, str_concat(sig, str_concat(tr_emit_body_lines(body_lines), "\n")))
+            continue
+
+        i = i + 1
+
+    mut result := "# Generated by c2lpp v0.4.0 (Direct Native Mapping + 16-byte CSpan)\n\n"
+    if str_len(header_consts) > 0:
+        result = str_concat(result, str_concat(header_consts, "\n"))
+    if str_len(structs_out) > 0:
+        result = str_concat(result, structs_out)
+    if str_len(externs_out) > 0:
+        result = str_concat(result, str_concat("extern \"C\":\n", str_concat(externs_out, "\n")))
+    if str_len(funcs_out) > 0:
+        result = str_concat(result, funcs_out)
+    return result

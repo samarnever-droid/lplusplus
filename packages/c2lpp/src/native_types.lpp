@@ -1,0 +1,138 @@
+# native_types.lpp — Direct C-to-L++ native machine type mapping (zero Int erasure).
+#
+# Maps C types directly to exact L++ native ABI types:
+#   int8_t / signed char     -> I8
+#   uint8_t / unsigned char  -> U8
+#   int16_t / short          -> I16
+#   uint16_t / unsigned short -> U16
+#   int32_t / int            -> I32
+#   uint32_t / unsigned int  -> U32
+#   int64_t / long long      -> I64
+#   uint64_t / unsigned long -> U64
+#   size_t                   -> USize
+#   ssize_t / ptrdiff_t      -> ISize
+#   float / double           -> Float
+#   bool / _Bool             -> Bool
+#   const char*              -> Str (for extern/return) or Ptr[U8]
+#   void*                    -> RawPtr
+#   T*                       -> Ptr[T] (direct 8-byte machine pointer)
+
+def nt_normalize_ws(raw: Str) -> Str:
+    mut s := str_trim(raw)
+    s = str_replace(s, "\t", " ")
+    s = str_replace(s, "\r", " ")
+    s = str_replace(s, "\n", " ")
+    while str_contains(s, "  "):
+        s = str_replace(s, "  ", " ")
+    return str_trim(s)
+
+def nt_strip_qualifiers(raw: Str) -> Str:
+    mut s := nt_normalize_ws(raw)
+    s = str_replace(s, "const ", "")
+    s = str_replace(s, " const", "")
+    s = str_replace(s, "volatile ", "")
+    s = str_replace(s, "restrict ", "")
+    s = str_replace(s, "__restrict ", "")
+    s = str_replace(s, "extern ", "")
+    s = str_replace(s, "static ", "")
+    s = str_replace(s, "inline ", "")
+    s = str_replace(s, "register ", "")
+    s = str_replace(s, "struct ", "")
+    return nt_normalize_ws(s)
+
+def nt_is_const_char_ptr(raw: Str) -> Bool:
+    low := str_to_lower(nt_normalize_ws(raw))
+    if !str_contains(low, "*"):
+        return false
+    if str_contains(low, "**") || str_contains(low, "* *"):
+        return false
+    return str_contains(low, "char") && str_contains(low, "const")
+
+def nt_map_scalar(cleaned: Str) -> Str:
+    low := str_to_lower(cleaned)
+    if low == "void":
+        return "Void"
+    if low == "bool" || low == "_bool":
+        return "Bool"
+    if low == "int8_t" || low == "signed char":
+        return "I8"
+    if low == "uint8_t" || low == "unsigned char" || low == "byte" || low == "char":
+        return "U8"
+    if low == "int16_t" || low == "short" || low == "short int" || low == "signed short":
+        return "I16"
+    if low == "uint16_t" || low == "unsigned short" || low == "unsigned short int":
+        return "U16"
+    if low == "int32_t" || low == "int" || low == "signed" || low == "signed int":
+        return "I32"
+    if low == "uint32_t" || low == "unsigned" || low == "unsigned int" || low == "u32":
+        return "U32"
+    if low == "int64_t" || low == "long" || low == "long int" || low == "long long" || low == "long long int" || low == "signed long" || low == "signed long long" || low == "sqlite3_int64":
+        return "Int"
+    if low == "uint64_t" || low == "unsigned long" || low == "unsigned long int" || low == "unsigned long long" || low == "unsigned long long int" || low == "u64" || low == "sqlite3_uint64":
+        return "U64"
+    if low == "size_t" || low == "uintptr_t":
+        return "USize"
+    if low == "ssize_t" || low == "ptrdiff_t" || low == "intptr_t":
+        return "ISize"
+    if low == "float" || low == "double" || low == "long double":
+        return "Float"
+    # Preserve named struct / typedef identifiers directly
+    if str_len(cleaned) > 0 && !str_contains(cleaned, " "):
+        return cleaned
+    return ""
+
+def c_type_to_native_lpp(raw: Str, is_extern: Bool) -> Str:
+    norm := nt_normalize_ws(raw)
+    if str_len(norm) == 0:
+        return "Void"
+
+    # Function pointer -> RawPtr
+    if str_contains(norm, "(*"):
+        return "RawPtr"
+
+    # `const char *` maps to `Str` for extern C string ergonomics
+    if is_extern && nt_is_const_char_ptr(norm):
+        return "Str"
+
+    # Pointer types: `void*` -> `RawPtr`, `T*` -> `Ptr[T]`
+    if str_contains(norm, "*"):
+        star_idx := str_find(norm, "*")
+        base_raw := str_trim(str_substr(norm, 0, star_idx))
+        rest := str_trim(str_substr(norm, star_idx + 1, str_len(norm) - star_idx - 1))
+        # Multi-level pointer `T**` -> `RawPtr`
+        if str_contains(rest, "*"):
+            return "RawPtr"
+        base_clean := nt_strip_qualifiers(base_raw)
+        if str_to_lower(base_clean) == "void":
+            return "RawPtr"
+        mapped_base := nt_map_scalar(base_clean)
+        if str_len(mapped_base) == 0 || mapped_base == "Void":
+            return "RawPtr"
+        return str_concat("Ptr[", str_concat(mapped_base, "]"))
+
+    # Array parameter `T[]` -> `CSpan` (16-byte bounds-checked native span)
+    if str_contains(norm, "["):
+        return "CSpan"
+
+    cleaned := nt_strip_qualifiers(norm)
+    mapped := nt_map_scalar(cleaned)
+    if str_len(mapped) == 0:
+        return "Int"
+    return mapped
+
+def c_type_to_lpp_fn_type(raw: Str) -> Str:
+    ty := c_type_to_native_lpp(raw, false)
+    if ty == "I8" || ty == "U8" || ty == "I16" || ty == "U16" || ty == "I32" || ty == "U32" || ty == "U64" || ty == "USize" || ty == "ISize":
+        return "Int"
+    return ty
+
+def c_type_byte_size(lpp_ty: Str) -> Int:
+    if lpp_ty == "I8" || lpp_ty == "U8" || lpp_ty == "Bool":
+        return 1
+    if lpp_ty == "I16" || lpp_ty == "U16":
+        return 2
+    if lpp_ty == "I32" || lpp_ty == "U32":
+        return 4
+    if lpp_ty == "CSpan":
+        return 16
+    return 8

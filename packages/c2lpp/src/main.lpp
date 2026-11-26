@@ -1,0 +1,122 @@
+# main.lpp — c2lpp v0.4.0 CLI, Self-Test, and Native Speed Benchmark.
+#
+# Usage:
+#   c2lpp <input.h|input.c> [-o output.lpp]
+#   c2lpp --selftest
+#   c2lpp --bench
+
+import cspan
+import native_types
+import translator
+
+def run_selftest() -> Int:
+    # 1. Verify compact 16-byte CSpan layout (vs legacy 64-byte CPtr + 88-byte side record)
+    span_size := size_of[CSpan]()
+    if span_size != 16:
+        print_str("FAIL: CSpan size must be 16 bytes")
+        return 1
+
+    # 2. Verify 8-byte packed FastHandle round-trip
+    h := fast_handle_pack(12345, 99)
+    if fast_handle_index(h) != 12345 || fast_handle_gen(h) != 99:
+        print_str("FAIL: FastHandle pack/unpack mismatch")
+        return 1
+
+    # 3. Verify CSpan native checked reads/writes & subspan
+    buf := cspan_alloc_i32(8)
+    mut i := 0
+    while i < 8:
+        cspan_set_i32(buf, i, (i * 10 + 3) as I32)
+        i = i + 1
+    sub := cspan_sub(buf, 8, 16)
+    v2 := cspan_get_i32(sub, 0) as Int
+    v5 := cspan_get_i32(sub, 3) as Int
+    cspan_free(buf)
+    if v2 != 23 || v5 != 53:
+        print_str("FAIL: CSpan subspan read mismatch")
+        return 1
+
+    # 4. Verify direct native C-to-L++ type mapping (zero Int erasure)
+    if c_type_to_native_lpp("int32_t", false) != "I32":
+        print_str("FAIL: int32_t mapping")
+        return 1
+    if c_type_to_native_lpp("uint64_t", false) != "U64":
+        print_str("FAIL: uint64_t mapping")
+        return 1
+    if c_type_to_native_lpp("size_t", false) != "USize":
+        print_str("FAIL: size_t mapping")
+        return 1
+    if c_type_to_native_lpp("int *", false) != "Ptr[I32]":
+        print_str("FAIL: int* mapping")
+        return 1
+    if c_type_to_native_lpp("void *", false) != "RawPtr":
+        print_str("FAIL: void* mapping")
+        return 1
+    if c_type_to_native_lpp("const char *", true) != "Str":
+        print_str("FAIL: const char* extern mapping")
+        return 1
+
+    # 5. Verify end-to-end C header + function translation
+    sample := "#define MAGIC 42\ntypedef struct {\n    int32_t x;\n    uint64_t y;\n} Point;\nint32_t c_add(int32_t a, int32_t b);\nint32_t sum_pair(int32_t a, int32_t b) {\n    int32_t total = a + b;\n    return total;\n}\n"
+    out := c2lpp_translate(sample)
+    if !str_contains(out, "const MAGIC = 42"):
+        print_str("FAIL: missing const MAGIC")
+        return 1
+    if !str_contains(out, "@repr(C)\nstruct Point:\n    x: I32\n    y: U64"):
+        print_str("FAIL: missing @repr(C) Point")
+        return 1
+    if !str_contains(out, "def c_add(a: I32, b: I32) -> I32"):
+        print_str("FAIL: missing extern c_add")
+        return 1
+    if !str_contains(out, "def sum_pair(a: Int, b: Int) -> Int:"):
+        print_str("FAIL: missing translated sum_pair")
+        return 1
+
+    print_str("c2lpp v0.4.0 selftest OK (CSpan=16B, FastHandle=8B, direct native mapping)")
+    return 0
+
+def run_bench() -> Int:
+    n := 2000000
+    buf := cspan_alloc_i64(n)
+    p := cspan_as_i64_ptr(buf)
+    t0 := time_ms()
+    mut i := 0
+    while i < n:
+        cptr_set_i64(p, n, i, i * 3 + 1)
+        i = i + 1
+    mut acc := 0
+    i = 0
+    while i < n:
+        acc = acc + cptr_get_i64(p, n, i)
+        i = i + 1
+    t1 := time_ms()
+    cspan_free(buf)
+    print_str(str_concat("c2lpp checked 2M i64 write+read checksum=", int_to_str(acc)))
+    print_str(str_concat("elapsed_ms=", int_to_str(t1 - t0)))
+    return 0
+
+def main():
+    argc := args_count()
+    if argc <= 1:
+        code := run_selftest()
+        if code != 0:
+            exit(code)
+        return
+
+    first := args_get(1)
+    if first == "--selftest":
+        code := run_selftest()
+        if code != 0:
+            exit(code)
+        return
+    if first == "--bench":
+        run_bench()
+        return
+
+    src := read_file(first)
+    translated := c2lpp_translate(src)
+    if argc >= 4 && args_get(2) == "-o":
+        write_file(args_get(3), translated)
+        print_str(str_concat("wrote ", args_get(3)))
+    else:
+        print_str(translated)

@@ -1,0 +1,229 @@
+# cspan.lpp — Compact 16-byte bounds-checked native pointer (CSpan)
+# and 8-byte packed generation handle (FastHandle) for c2lpp v0.4.0.
+#
+# Replaces the legacy 64-byte CPtr + 88-byte side-table + CMemory context:
+# - CSpan is exactly 16 bytes (base: RawPtr + len: USize) — fits in 2 registers,
+#   stack-allocated in Frame with zero ARC overhead.
+# - Every load/store does a single bounds + null check then a direct native
+#   ptr_offset[T] + ptr_read[T] / ptr_write[T], compiling under LLVM -O3 to
+#   ~2 instructions with zero indirect table lookups.
+# - FastHandle packs (index: 32-bit | generation: 32-bit) into a single 8-byte Int.
+
+extern "C":
+    def calloc(count: USize, size: USize) -> RawPtr
+    def free(ptr: RawPtr)
+
+@repr(C)
+struct CSpan:
+    base: RawPtr
+    len: USize
+
+def cspan_trap(code: Str) -> Void:
+    print_str(str_concat("c2lpp safety trap: ", code))
+    exit(101)
+
+def cspan_empty() -> CSpan:
+    unsafe:
+        return CSpan(ptr_null[U8]() as RawPtr, 0 as USize)
+
+def cspan_from_raw(base: RawPtr, len: USize) -> CSpan:
+    return CSpan(base, len)
+
+def cspan_alloc_bytes(byte_len: Int) -> CSpan:
+    if byte_len <= 0:
+        return cspan_empty()
+    unsafe:
+        raw := calloc(byte_len as USize, 1 as USize)
+        if ptr_is_null(raw as Ptr[U8]):
+            cspan_trap("C2-OOM")
+        return CSpan(raw, byte_len as USize)
+
+def cspan_alloc_i32(count: Int) -> CSpan:
+    if count <= 0:
+        return cspan_empty()
+    unsafe:
+        raw := calloc(count as USize, 4 as USize)
+        if ptr_is_null(raw as Ptr[U8]):
+            cspan_trap("C2-OOM")
+        return CSpan(raw, (count * 4) as USize)
+
+def cspan_alloc_i64(count: Int) -> CSpan:
+    if count <= 0:
+        return cspan_empty()
+    unsafe:
+        raw := calloc(count as USize, 8 as USize)
+        if ptr_is_null(raw as Ptr[U8]):
+            cspan_trap("C2-OOM")
+        return CSpan(raw, (count * 8) as USize)
+
+def cspan_free(span: CSpan) -> Void:
+    unsafe:
+        if !ptr_is_null(span.base as Ptr[U8]):
+            free(span.base)
+
+def cspan_byte_len(span: CSpan) -> Int:
+    return span.len as Int
+
+def cspan_sub(span: CSpan, byte_offset: Int, byte_len: Int) -> CSpan:
+    total := span.len as Int
+    if byte_offset < 0 || byte_len < 0 || byte_offset + byte_len > total:
+        cspan_trap("C2-SUBSPAN-OOB")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            if byte_len == 0:
+                return cspan_empty()
+            cspan_trap("C2-NULL-DEREF")
+        next_ptr := ptr_add[U8](span.base as Ptr[U8], byte_offset as USize)
+        return CSpan(next_ptr as RawPtr, byte_len as USize)
+
+# --- Direct native bounds-checked typed loads & stores ---
+
+def cspan_get_u8(span: CSpan, index: Int) -> U8:
+    if index < 0 || index >= (span.len as Int):
+        cspan_trap("C2-OOB-U8")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        p := ptr_add[U8](span.base as Ptr[U8], index as USize)
+        return ptr_read[U8](p)
+
+def cspan_set_u8(span: CSpan, index: Int, value: U8) -> Void:
+    if index < 0 || index >= (span.len as Int):
+        cspan_trap("C2-OOB-U8")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        p := ptr_add[U8](span.base as Ptr[U8], index as USize)
+        ptr_write[U8](p, value)
+
+def cspan_get_i32(span: CSpan, index: Int) -> I32:
+    byte_off := index * 4
+    if index < 0 || byte_off + 4 > (span.len as Int):
+        cspan_trap("C2-OOB-I32")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        p := ptr_offset[I32](span.base as Ptr[I32], index as ISize)
+        return ptr_read[I32](p)
+
+def cspan_set_i32(span: CSpan, index: Int, value: I32) -> Void:
+    byte_off := index * 4
+    if index < 0 || byte_off + 4 > (span.len as Int):
+        cspan_trap("C2-OOB-I32")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        p := ptr_offset[I32](span.base as Ptr[I32], index as ISize)
+        ptr_write[I32](p, value)
+
+def cspan_get_i64(span: CSpan, index: Int) -> Int:
+    byte_off := index * 8
+    if index < 0 || byte_off + 8 > (span.len as Int):
+        cspan_trap("C2-OOB-I64")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        p := ptr_offset[Int](span.base as Ptr[Int], index as ISize)
+        return ptr_read[Int](p)
+
+def cspan_set_i64(span: CSpan, index: Int, value: Int) -> Void:
+    byte_off := index * 8
+    if index < 0 || byte_off + 8 > (span.len as Int):
+        cspan_trap("C2-OOB-I64")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        p := ptr_offset[Int](span.base as Ptr[Int], index as ISize)
+        ptr_write[Int](p, value)
+
+def cspan_copy(dst: CSpan, src: CSpan, byte_len: Int) -> Void:
+    if byte_len < 0 || byte_len > (dst.len as Int) || byte_len > (src.len as Int):
+        cspan_trap("C2-COPY-OOB")
+    if byte_len == 0:
+        return
+    unsafe:
+        if ptr_is_null(dst.base as Ptr[U8]) || ptr_is_null(src.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        memcpy_raw(dst.base as Ptr[U8], src.base as Ptr[U8], byte_len as USize)
+
+def cspan_zero(dst: CSpan) -> Void:
+    n := dst.len as Int
+    if n <= 0:
+        return
+    unsafe:
+        if ptr_is_null(dst.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        memset_raw(dst.base as Ptr[U8], 0 as U8, dst.len)
+
+# --- Zero-ARC register-passed checked native pointer ops ---
+# Single unsigned bounds check `(index as USize) >= (count as USize)` handles
+# both negative indices and upper-bound overflow in ONE branch, with zero ARC
+# traffic so LLVM -O3 inlines and vectorizes to native C speed.
+
+def cspan_as_i64_ptr(span: CSpan) -> Ptr[Int]:
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]) && (span.len as Int) > 0:
+            cspan_trap("C2-NULL-DEREF")
+        return span.base as Ptr[Int]
+
+def cspan_as_i32_ptr(span: CSpan) -> Ptr[I32]:
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]) && (span.len as Int) > 0:
+            cspan_trap("C2-NULL-DEREF")
+        return span.base as Ptr[I32]
+
+def cspan_as_u8_ptr(span: CSpan) -> Ptr[U8]:
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]) && (span.len as Int) > 0:
+            cspan_trap("C2-NULL-DEREF")
+        return span.base as Ptr[U8]
+
+def cptr_get_u8(base: Ptr[U8], count: Int, index: Int) -> U8:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-U8")
+    unsafe:
+        return ptr_read[U8](ptr_add[U8](base, index as USize))
+
+def cptr_set_u8(base: Ptr[U8], count: Int, index: Int, value: U8) -> Void:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-U8")
+    unsafe:
+        ptr_write[U8](ptr_add[U8](base, index as USize), value)
+
+def cptr_get_i32(base: Ptr[I32], count: Int, index: Int) -> I32:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-I32")
+    unsafe:
+        return ptr_read[I32](ptr_offset[I32](base, index as ISize))
+
+def cptr_set_i32(base: Ptr[I32], count: Int, index: Int, value: I32) -> Void:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-I32")
+    unsafe:
+        ptr_write[I32](ptr_offset[I32](base, index as ISize), value)
+
+def cptr_get_i64(base: Ptr[Int], count: Int, index: Int) -> Int:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-I64")
+    unsafe:
+        return ptr_read[Int](ptr_offset[Int](base, index as ISize))
+
+def cptr_set_i64(base: Ptr[Int], count: Int, index: Int, value: Int) -> Void:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-I64")
+    unsafe:
+        ptr_write[Int](ptr_offset[Int](base, index as ISize), value)
+
+# --- Compact 8-byte packed generation handle (index:32 | generation:32) ---
+# 8x smaller than legacy 64-byte CPtr; fits in a single machine register.
+
+def fast_handle_pack(index: Int, generation: Int) -> Int:
+    idx32 := index & 4294967295
+    gen32 := generation & 4294967295
+    return idx32 | (gen32 << 32)
+
+def fast_handle_index(handle: Int) -> Int:
+    return handle & 4294967295
+
+def fast_handle_gen(handle: Int) -> Int:
+    return (handle >> 32) & 4294967295

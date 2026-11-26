@@ -6,6 +6,19 @@ use tabled::builder::Builder;
 
 use lpp_pm::registry::Registry;
 
+fn redact_url_credentials(url: &str) -> String {
+    if let Some(scheme_end) = url.find("://") {
+        let rest = &url[scheme_end + 3..];
+        if let Some(at_pos) = rest.find('@') {
+            let slash_pos = rest.find('/').unwrap_or(rest.len());
+            if at_pos < slash_pos {
+                return format!("{}://***@{}", &url[..scheme_end], &rest[at_pos + 1..]);
+            }
+        }
+    }
+    url.to_string()
+}
+
 /// Split `name@version` into `(name, Option<version>)`.
 fn split_name_version(s: &str) -> (&str, Option<&str>) {
     match s.split_once('@') {
@@ -393,7 +406,7 @@ pub fn publish(reg: &Registry, directory: &Path) -> Result<(), String> {
     reg.push().map_err(|e| e.to_string())?;
     println!(
         "published {name} {version} (sha256 {checksum}) → {}",
-        reg.remote()
+        redact_url_credentials(reg.remote())
     );
     Ok(())
 }

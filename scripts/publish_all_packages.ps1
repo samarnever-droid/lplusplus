@@ -23,7 +23,9 @@ $LeafPackages = @(
     "lppdb",
     "lppsqlite",
     "lppstore",
-    "lreact"
+    "lreact",
+    "lpp-collections",
+    "c2lpp"
 )
 
 foreach ($pkg in $LeafPackages) {

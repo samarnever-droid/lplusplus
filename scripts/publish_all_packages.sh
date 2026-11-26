@@ -30,6 +30,8 @@ LEAF_PACKAGES=(
   lppsqlite
   lppstore
   lreact
+  lpp-collections
+  c2lpp
 )
 
 for pkg in "${LEAF_PACKAGES[@]}"; do
