@@ -182,13 +182,12 @@ pub fn update(reg: Option<&Registry>, dir: &Path, target: Option<&str>) -> Resul
     // target its full candidate set while every other reachable locked
     // package is pinned to its locked version.
     if let Some(t) = target {
-        if reg.is_none() {
+        let Some(reg) = reg.as_ref() else {
             return Err(
                 "no registry configured: pass --registry <git-url> or set KEEL_REGISTRY"
                     .to_string(),
             );
-        }
-        let reg = reg.as_ref().unwrap();
+        };
         let reach = reachable_in(&old, &roots);
         for (name, p) in &old {
             if name == t || !reach.contains(name) || p.source != "registry" {
@@ -215,7 +214,8 @@ pub fn update(reg: Option<&Registry>, dir: &Path, target: Option<&str>) -> Resul
     // The closure owns its copy of the lock map; the original stays for
     // the diff after the resolver returns.
     let old_for_provider = old.clone();
-    let available: Box<dyn Fn(&str) -> Option<Vec<Candidate>>> = Box::new(move |name: &str| {
+    type CandidateProvider<'a> = Box<dyn Fn(&str) -> Option<Vec<Candidate>> + 'a>;
+    let available: CandidateProvider<'_> = Box::new(move |name: &str| {
         let single_pin = match target {
             Some(t) if name != t => old_for_provider
                 .get(name)

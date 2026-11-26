@@ -53,7 +53,7 @@ fn collect_counts(counters: &[AtomicU64]) -> BTreeMap<u32, u64> {
         .enumerate()
         .filter_map(|(function_id, counter)| {
             let count = counter.load(Ordering::Relaxed);
-            (count > 0).then(|| (function_id as u32, count))
+            (count > 0).then_some((function_id as u32, count))
         })
         .collect()
 }

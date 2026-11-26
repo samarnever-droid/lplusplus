@@ -150,16 +150,17 @@ fn merge_objects(objects: &[ObjectImage], opts: &LinkOptions) -> Result<Merged, 
                     };
                     if new_rank > prev_rank {
                         syms.insert(s.name.clone(), cand);
-                    } else if new_rank == prev_rank && prev.bind == Bind::Global {
-                        if !opts.allow_multiple_definition {
-                            return Err(format!(
-                                "duplicate definition of symbol '{}' ({} and {})",
-                                s.name,
-                                objects[prev.object].path.display(),
-                                obj.path.display()
-                            )
-                            .into());
-                        }
+                    } else if new_rank == prev_rank
+                        && prev.bind == Bind::Global
+                        && !opts.allow_multiple_definition
+                    {
+                        return Err(format!(
+                            "duplicate definition of symbol '{}' ({} and {})",
+                            s.name,
+                            objects[prev.object].path.display(),
+                            obj.path.display()
+                        )
+                        .into());
                     }
                 }
             }
@@ -232,10 +233,12 @@ fn collect_undefined(objects: &[ObjectImage], merged: &Merged) -> Vec<String> {
     let mut u = BTreeSet::new();
     for o in objects {
         for rel in &o.relocations {
-            if let RelTarget::Name(n) = &rel.target {
-                if !merged.syms.contains_key(n) && n != "__ImageBase" && !n.starts_with("__self_") {
-                    u.insert(n.clone());
-                }
+            if let RelTarget::Name(n) = &rel.target
+                && !merged.syms.contains_key(n)
+                && n != "__ImageBase"
+                && !n.starts_with("__self_")
+            {
+                u.insert(n.clone());
             }
         }
         for n in &o.undefined {

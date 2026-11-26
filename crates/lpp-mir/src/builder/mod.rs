@@ -314,9 +314,7 @@ fn unescape_literal(input: &str) -> Option<String> {
             decoded.push(character);
             continue;
         }
-        let Some(escaped) = characters.next() else {
-            return None;
-        };
+        let escaped = characters.next()?;
         match escaped {
             'n' => decoded.push('\n'),
             'r' => decoded.push('\r'),

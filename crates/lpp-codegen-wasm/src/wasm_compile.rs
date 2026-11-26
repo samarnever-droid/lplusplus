@@ -153,11 +153,11 @@ pub(super) fn compile_module(
     });
     // Task runtime destructors (5D2b slice 3), after the closure
     // destroyer: `lpp_drop_task`, then `lpp_drop_tuple`.
-    let task_drop_slot = plan.has_tasks.then(|| next_drop_slot);
+    let task_drop_slot = plan.has_tasks.then_some(next_drop_slot);
     if plan.has_tasks {
         next_drop_slot += 1;
     }
-    let tuple_drop_slot = (plan.has_tasks || plan.has_tuple).then(|| next_drop_slot);
+    let tuple_drop_slot = (plan.has_tasks || plan.has_tuple).then_some(next_drop_slot);
 
     let mut env = Env {
         program,

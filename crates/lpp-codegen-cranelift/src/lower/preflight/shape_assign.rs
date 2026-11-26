@@ -1,16 +1,18 @@
 use super::*;
 
 pub(super) fn check_assign_shape(
-    program: &MirProgram,
-    types: &TypeInterner,
+    ctx: &PreflightCtx<'_>,
     target: MirLocalId,
     value: &Rvalue,
-    function: &MirFunction,
-    mir_id: MirFunctionId,
-    aggregates: &AggregateIndex,
-    layouts: &HashMap<MirAggregateId, AggregateLayout>,
     scan: &mut ScanState,
 ) -> Result<(), CodegenError> {
+    let PreflightCtx {
+        program,
+        types,
+        mir_id,
+        aggregates,
+        layouts,
+    } = *ctx;
     let check_operand = |operand: &Operand| operand_type(program, types, operand, mir_id);
     let local_ty = |local: MirLocalId| {
         program
@@ -487,9 +489,7 @@ pub(super) fn check_assign_shape(
             }
         }
         Rvalue::Builtin { builtin, arguments } => {
-            check_builtin_shape(
-                program, types, target, target_ty, builtin, arguments, mir_id, scan,
-            )?;
+            check_builtin_shape(ctx, target, target_ty, builtin, arguments, scan)?;
         }
         Rvalue::Tuple(elements) => {
             for operand in program.operands(*elements) {

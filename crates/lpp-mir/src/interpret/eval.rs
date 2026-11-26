@@ -139,17 +139,17 @@ fn owns_heap_refs(value: &RuntimeValue) -> bool {
 /// Whether the type names a heap value (a runtime heap node, or an
 /// inline tuple that can own one).
 fn is_heap_type(types: &TypeInterner, ty: TypeId) -> bool {
-    match types.kind(ty) {
+    matches!(
+        types.kind(ty),
         TypeKind::Function { .. }
-        | TypeKind::List(_)
-        | TypeKind::Slice(_)
-        | TypeKind::Task(_)
-        | TypeKind::Tuple(_)
-        | TypeKind::Map { .. }
-        | TypeKind::Nominal { .. } => true,
-        TypeKind::Primitive(PrimitiveType::String) => true,
-        _ => false,
-    }
+            | TypeKind::List(_)
+            | TypeKind::Slice(_)
+            | TypeKind::Task(_)
+            | TypeKind::Tuple(_)
+            | TypeKind::Map { .. }
+            | TypeKind::Nominal { .. }
+            | TypeKind::Primitive(PrimitiveType::String)
+    )
 }
 
 fn function_id_of_closure(interpreter: &Interpreter<'_>, id: HeapId) -> MirFunctionId {
@@ -178,14 +178,14 @@ fn heap_string(heap: &[HeapNode], id: HeapId) -> &str {
     }
 }
 
-fn heap_list<'heap>(heap: &'heap [HeapNode], id: HeapId) -> &'heap Vec<RuntimeValue> {
+fn heap_list(heap: &[HeapNode], id: HeapId) -> &Vec<RuntimeValue> {
     match &heap[id.0 as usize] {
         HeapNode::List(entries) => entries,
         _ => unreachable!("list handles reference list heap nodes"),
     }
 }
 
-fn heap_list_mut<'heap>(heap: &'heap mut [HeapNode], id: HeapId) -> &'heap mut Vec<RuntimeValue> {
+fn heap_list_mut(heap: &mut [HeapNode], id: HeapId) -> &mut Vec<RuntimeValue> {
     match &mut heap[id.0 as usize] {
         HeapNode::List(entries) => entries,
         _ => unreachable!("list handles reference list heap nodes"),
@@ -268,8 +268,8 @@ fn max_u64(left: i64, right: i64) -> i64 {
 /// v1 case folding touches ASCII letters only.
 fn ascii_lowercase(text: &str) -> String {
     text.chars()
-        .map(|character| {
-            (if matches!(character, 'A'..='Z') {
+        .map(|character: char| {
+            (if character.is_ascii_uppercase() {
                 character as u8 + 32
             } else {
                 character as u8
@@ -281,8 +281,8 @@ fn ascii_lowercase(text: &str) -> String {
 /// v1 case folding touches ASCII letters only.
 fn ascii_uppercase(text: &str) -> String {
     text.chars()
-        .map(|character| {
-            (if matches!(character, 'a'..='z') {
+        .map(|character: char| {
+            (if character.is_ascii_lowercase() {
                 character as u8 - 32
             } else {
                 character as u8
@@ -402,13 +402,13 @@ fn format_percent_g(value: f64) -> String {
     }
     let scientific = format!("{magnitude:.5e}");
     let (mantissa, exponent_part) = scientific.split_once('e').expect("scientific form");
-    let exponent = i32::from_str_radix(exponent_part, 10).unwrap_or(0);
+    let exponent = exponent_part.parse::<i32>().unwrap_or(0);
     let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
     let trimmed = digits.trim_end_matches('0');
     let trimmed = if trimmed.is_empty() { "0" } else { trimmed };
     let sign = if negative { "-" } else { "" };
     let significant = i32::try_from(trimmed.len()).unwrap_or(i32::MAX);
-    if exponent < -4 || exponent >= 6 {
+    if !(-4..6).contains(&exponent) {
         // C `%g` exponent form: `d[.ddd]e±EE` with trailing zeros stripped.
         let mantissa = if significant == 1 {
             trimmed.to_string()

@@ -58,15 +58,15 @@ impl<'hir> TypeChecker<'hir> {
             StatementKind::Assign { target, value } => {
                 self.validate_expression_safety(target, in_async, in_unsafe, closure_scope)?;
                 self.validate_expression_safety(value, in_async, in_unsafe, closure_scope)?;
-                if let Some(local) = self.name_local(target) {
-                    if borrowed_sources.contains(&local) {
-                        return Err(self.at(
-                            statement.origin,
-                            TypeError::BorrowedSliceEscape {
-                                reason: "source reassigned while a slice view is live",
-                            },
-                        ));
-                    }
+                if let Some(local) = self.name_local(target)
+                    && borrowed_sources.contains(&local)
+                {
+                    return Err(self.at(
+                        statement.origin,
+                        TypeError::BorrowedSliceEscape {
+                            reason: "source reassigned while a slice view is live",
+                        },
+                    ));
                 }
             }
             StatementKind::Expression(expression) => {
@@ -131,21 +131,20 @@ impl<'hir> TypeChecker<'hir> {
         closure_scope: Option<ScopeId>,
     ) -> Result<(), ShadowTypeError> {
         let expression = self.package.expressions[expression_id];
-        if let Some(scope) = closure_scope {
-            if let Some(local) = self.name_local(expression_id) {
-                if !self.scope_is_inside(self.package.locals[local].scope, scope) {
-                    if self.local_is_slice(local) {
-                        return Err(self.at(
-                            expression.origin,
-                            TypeError::BorrowedSliceEscape {
-                                reason: "slice view captured by a closure",
-                            },
-                        ));
-                    }
-                    if self.local_is_task(local) {
-                        return Err(self.at(expression.origin, TypeError::UnsafeAsyncTaskCapture));
-                    }
-                }
+        if let Some(scope) = closure_scope
+            && let Some(local) = self.name_local(expression_id)
+            && !self.scope_is_inside(self.package.locals[local].scope, scope)
+        {
+            if self.local_is_slice(local) {
+                return Err(self.at(
+                    expression.origin,
+                    TypeError::BorrowedSliceEscape {
+                        reason: "slice view captured by a closure",
+                    },
+                ));
+            }
+            if self.local_is_task(local) {
+                return Err(self.at(expression.origin, TypeError::UnsafeAsyncTaskCapture));
             }
         }
 

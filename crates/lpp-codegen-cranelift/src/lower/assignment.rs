@@ -111,7 +111,17 @@ impl<'m> Lowering<'m> {
                     );
                     let signed =
                         is_signed_integer_kind(left_kind) && is_signed_integer_kind(right_kind);
-                    Some(self.lower_binary(builder, *operator, ty, signed, string_eq, l, r)?)
+                    Some(self.lower_binary(
+                        builder,
+                        *operator,
+                        operators::BinaryOpShape {
+                            ty,
+                            signed,
+                            string_eq,
+                        },
+                        l,
+                        r,
+                    )?)
                 }
             }
             Rvalue::ExternalCall {

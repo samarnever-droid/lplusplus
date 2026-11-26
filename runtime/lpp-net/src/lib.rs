@@ -83,6 +83,10 @@ fn duration(milliseconds: i64) -> Option<Duration> {
 }
 
 /// Open a TCP connection after DNS resolution. Returns 0 on any failure.
+///
+/// # Safety
+///
+/// `host` must be null or a valid, NUL-terminated C string pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_rs_connect(
     host: *const c_char,
@@ -167,6 +171,10 @@ pub extern "C" fn lpp_net_rs_accept(listener: i64) -> i64 {
 }
 
 /// Write all bytes in `data`. Returns the byte count or -1 on failure.
+///
+/// # Safety
+///
+/// `data` must be null or a valid, NUL-terminated C string pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_rs_send_all(handle: i64, data: *const c_char) -> i64 {
     if data.is_null() {
@@ -267,6 +275,10 @@ pub extern "C" fn lpp_net_rs_udp_bind(port: i64) -> i64 {
 /// Connects an existing UDP endpoint to a peer after DNS resolution. UDP
 /// connect performs no handshake; it selects a default peer and lets send/recv
 /// use the same ownership and deadline rules as TCP.
+///
+/// # Safety
+///
+/// `host` must be null or a valid, NUL-terminated C string pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_rs_udp_connect(
     handle: i64,
@@ -302,6 +314,10 @@ pub unsafe extern "C" fn lpp_net_rs_udp_connect(
 
 /// Sends a complete datagram to the connected peer. Datagram writes are atomic
 /// at the OS API boundary: a short successful write is rejected as failure.
+///
+/// # Safety
+///
+/// `data` must be null or a valid, NUL-terminated C string pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_rs_udp_send(handle: i64, data: *const c_char) -> i64 {
     if data.is_null() {
@@ -361,6 +377,11 @@ pub extern "C" fn lpp_net_rs_close(handle: i64) {
 }
 
 /// Release a string returned by `lpp_net_rs_recv` using Rust's allocator.
+///
+/// # Safety
+///
+/// `value` must be null or a pointer previously returned by `lpp_net_rs_recv`
+/// or `lpp_net_rs_udp_recv` that has not already been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_rs_free_string(value: *mut c_char) {
     if !value.is_null() {

@@ -147,10 +147,10 @@ pub extern "C" fn lpp_clock_now(handle: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn lpp_clock_advance(handle: i64, delta: i64) {
-    if let Some(clock) = clock_mut(handle) {
-        if clock.is_virtual {
-            clock.current_time = clock.current_time.wrapping_add(delta);
-        }
+    if let Some(clock) = clock_mut(handle)
+        && clock.is_virtual
+    {
+        clock.current_time = clock.current_time.wrapping_add(delta);
     }
 }
 
@@ -193,6 +193,9 @@ pub extern "C" fn lpp_sys_uptime() -> i64 {
     start.elapsed().as_secs() as i64
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_malloc(size: i64) -> i64 {
     if size <= 0 {
@@ -201,6 +204,9 @@ pub unsafe extern "C" fn lpp_c_malloc(size: i64) -> i64 {
     unsafe { libc::calloc(1, size as usize) as usize as i64 }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_free(ptr: i64) {
     if ptr != 0 {
@@ -208,6 +214,9 @@ pub unsafe extern "C" fn lpp_c_free(ptr: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_load_u8(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 {
@@ -217,6 +226,9 @@ pub unsafe extern "C" fn lpp_c_load_u8(ptr: i64, offset: i64) -> i64 {
     unsafe { i64::from(*p) }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_store_u8(ptr: i64, offset: i64, val: i64) {
     if ptr == 0 {
@@ -228,6 +240,9 @@ pub unsafe extern "C" fn lpp_c_store_u8(ptr: i64, offset: i64, val: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_load_i32(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 {
@@ -237,6 +252,9 @@ pub unsafe extern "C" fn lpp_c_load_i32(ptr: i64, offset: i64) -> i64 {
     unsafe { i64::from(p.read_unaligned()) }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_store_i32(ptr: i64, offset: i64, val: i64) {
     if ptr == 0 {
@@ -248,6 +266,9 @@ pub unsafe extern "C" fn lpp_c_store_i32(ptr: i64, offset: i64, val: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_load_i64(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 {
@@ -257,6 +278,9 @@ pub unsafe extern "C" fn lpp_c_load_i64(ptr: i64, offset: i64) -> i64 {
     unsafe { p.read_unaligned() }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid heap pointer with sufficient allocated capacity for the requested offset and access width.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_c_store_i64(ptr: i64, offset: i64, val: i64) {
     if ptr == 0 {
@@ -278,6 +302,9 @@ unsafe extern "system" {
     fn FreeLibrary(hLibModule: *mut libc::c_void) -> i32;
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dlopen(filename: *const libc::c_char, _flags: i64) -> i64 {
@@ -287,6 +314,9 @@ pub unsafe extern "C" fn dlopen(filename: *const libc::c_char, _flags: i64) -> i
     unsafe { LoadLibraryA(filename) as usize as i64 }
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dlsym(handle: i64, symbol: *const libc::c_char) -> i64 {
@@ -296,6 +326,9 @@ pub unsafe extern "C" fn dlsym(handle: i64, symbol: *const libc::c_char) -> i64 
     unsafe { GetProcAddress(handle as usize as *mut libc::c_void, symbol) as usize as i64 }
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dlclose(handle: i64) -> i64 {
@@ -309,6 +342,9 @@ pub unsafe extern "C" fn dlclose(handle: i64) -> i64 {
     }
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dlerror() -> *mut libc::c_char {

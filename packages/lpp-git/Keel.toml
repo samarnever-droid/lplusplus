@@ -1,0 +1,8 @@
+[package]
+name = "lpp-git"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pure L++ Git protocol and repository client"
+
+[dependencies]

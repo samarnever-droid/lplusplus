@@ -60,7 +60,7 @@ unsafe extern "C" fn list_destroy(payload: *mut c_void) {
 /// `lpp_list_arc_retain_element` (8-aligned, >= 0x1000).
 unsafe extern "C" fn arc_retain_element(value: i64) {
     let ptr = value as usize as *mut c_void;
-    if value == 0 || value as usize % 8 != 0 || (value as usize) < 0x1000 {
+    if value == 0 || !(value as usize).is_multiple_of(8) || (value as usize) < 0x1000 {
         return;
     }
     unsafe { lpp_arc_retain(ptr) };
@@ -68,7 +68,7 @@ unsafe extern "C" fn arc_retain_element(value: i64) {
 
 /// Release one ARC element, with the same raw-pointer skip.
 unsafe extern "C" fn arc_drop_element(value: i64) {
-    if value == 0 || value as usize % 8 != 0 || (value as usize) < 0x1000 {
+    if value == 0 || !(value as usize).is_multiple_of(8) || (value as usize) < 0x1000 {
         return;
     }
     unsafe { lpp_arc_release(value as usize as *mut c_void) };
@@ -91,6 +91,10 @@ unsafe fn new_with_ownership(retain: ElementFn, drop: ElementFn) -> *mut c_void 
 
 /// Trace for a list: report each owned element (ARC lists only;
 /// value lists own nothing). Mirrors `list_destroy`'s element walk.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_trace(payload: *mut c_void, ctx: *mut c_void) {
     if payload.is_null() {
@@ -107,12 +111,20 @@ pub unsafe extern "C" fn lpp_list_trace(payload: *mut c_void, ctx: *mut c_void) 
 }
 
 /// `List[Int]`: stores values, owns no element references.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ runtime C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_new() -> *mut c_void {
     unsafe { new_with_ownership(None, None) }
 }
 
 /// `List[ARC Object]`: owns one retained reference per element.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ runtime C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_new_arc() -> *mut c_void {
     unsafe { new_with_ownership(Some(arc_retain_element), Some(arc_drop_element)) }
@@ -140,6 +152,10 @@ unsafe fn grow(l: &mut LppList) {
 }
 
 /// Append a raw `i64` value (retaining first if this list owns elements).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_push(list: *mut c_void, value: i64) {
     if list.is_null() {
@@ -158,6 +174,10 @@ pub unsafe extern "C" fn lpp_list_push(list: *mut c_void, value: i64) {
 
 /// Store one ARC object reference in `List[T]` (promotes a value list to an
 /// owning list on first use, exactly as C does).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_push_arc(list: *mut c_void, value: *mut c_void) {
     if !list.is_null() {
@@ -171,18 +191,30 @@ pub unsafe extern "C" fn lpp_list_push_arc(list: *mut c_void, value: *mut c_void
 }
 
 /// Append a float (bit-packed into the `i64` slot).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_push_float(list: *mut c_void, value: f64) {
     unsafe { lpp_list_push(list, value.to_bits() as i64) };
 }
 
 /// Append a bool (stored as 1/0).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_push_bool(list: *mut c_void, value: i8) {
     unsafe { lpp_list_push(list, i64::from(value != 0)) };
 }
 
 /// Read the raw `i64` at `index` (bounds-checked; panics like C on OOB).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_get(list: *mut c_void, index: i64) -> i64 {
     if list.is_null() {
@@ -199,12 +231,20 @@ pub unsafe extern "C" fn lpp_list_get(list: *mut c_void, index: i64) -> i64 {
 }
 
 /// Read a float at `index` (bit-unpacked).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_get_float(list: *mut c_void, index: i64) -> f64 {
     f64::from_bits(unsafe { lpp_list_get(list, index) } as u64)
 }
 
 /// Read a bool at `index` (nonzero = true).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_get_bool(list: *mut c_void, index: i64) -> i8 {
     i8::from(unsafe { lpp_list_get(list, index) } != 0)
@@ -212,6 +252,10 @@ pub unsafe extern "C" fn lpp_list_get_bool(list: *mut c_void, index: i64) -> i8 
 
 /// Read an ARC object reference at `index` (borrowed; caller retains only
 /// when creating an additional owner).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_get_arc(list: *mut c_void, index: i64) -> *mut c_void {
     unsafe { lpp_list_get(list, index) as usize as *mut c_void }
@@ -220,6 +264,10 @@ pub unsafe extern "C" fn lpp_list_get_arc(list: *mut c_void, index: i64) -> *mut
 /// Overwrite the slot at `index`. Retains the incoming edge BEFORE dropping
 /// the old one — required for self-assignment such as
 /// `set(xs, 0, get(xs, 0))` where the list may hold the last reference.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_set(list: *mut c_void, index: i64, value: i64) {
     if list.is_null() {
@@ -232,39 +280,55 @@ pub unsafe extern "C" fn lpp_list_set(list: *mut c_void, index: i64, value: i64)
             l.len
         ));
     }
-    if let Some(retain) = l.retain_element {
-        if value != 0 {
-            unsafe { retain(value) };
-        }
+    if let Some(retain) = l.retain_element
+        && value != 0
+    {
+        unsafe { retain(value) };
     }
     let old = unsafe { *l.data.add(index as usize) };
-    if let Some(drop) = l.drop_element {
-        if old != 0 {
-            unsafe { drop(old) };
-        }
+    if let Some(drop) = l.drop_element
+        && old != 0
+    {
+        unsafe { drop(old) };
     }
     unsafe { *l.data.add(index as usize) = value };
 }
 
 /// Overwrite with a bool.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_set_bool(list: *mut c_void, index: i64, value: i8) {
     unsafe { lpp_list_set(list, index, i64::from(value != 0)) };
 }
 
 /// Overwrite with a float.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_set_float(list: *mut c_void, index: i64, value: f64) {
     unsafe { lpp_list_set(list, index, value.to_bits() as i64) };
 }
 
 /// Overwrite with an ARC object reference.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_set_arc(list: *mut c_void, index: i64, value: *mut c_void) {
     unsafe { lpp_list_set(list, index, value as i64) };
 }
 
 /// The number of elements (0 for a null list).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_len(list: *mut c_void) -> i64 {
     if list.is_null() {
@@ -275,6 +339,10 @@ pub unsafe extern "C" fn lpp_list_len(list: *mut c_void) -> i64 {
 }
 
 /// Pop the last element (panics on empty/null, like C).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_pop(list: *mut c_void) -> i64 {
     if list.is_null() {
@@ -290,12 +358,20 @@ pub unsafe extern "C" fn lpp_list_pop(list: *mut c_void) -> i64 {
 
 /// Compatibility entry point: a single ARC reference release (list lifetime
 /// is automatic in ownership-aware AOT code, so this is never a raw free).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_free(list: *mut c_void) {
     unsafe { lpp_arc_release(list) };
 }
 
 /// Reserve capacity (no-op if already large enough).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_reserve(list: *mut c_void, capacity: i64) {
     if list.is_null() {
@@ -314,6 +390,10 @@ pub unsafe extern "C" fn lpp_list_reserve(list: *mut c_void, capacity: i64) {
 }
 
 /// The current capacity (0 for a null list).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_capacity(list: *mut c_void) -> i64 {
     if list.is_null() {
@@ -325,6 +405,10 @@ pub unsafe extern "C" fn lpp_list_capacity(list: *mut c_void) -> i64 {
 
 /// Drop all elements (releasing owned references) and set len to 0, keeping
 /// the allocation.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_clear(list: *mut c_void) {
     if list.is_null() {
@@ -350,7 +434,7 @@ pub unsafe extern "C" fn lpp_list_clear(list: *mut c_void) {
 
 /// Borrow the live slots as a mutable slice (empty when the list is empty or
 /// its backing array has not been allocated yet).
-unsafe fn slots_mut<'a>(l: &'a mut LppList) -> &'a mut [i64] {
+unsafe fn slots_mut(l: &mut LppList) -> &mut [i64] {
     if l.data.is_null() || l.len <= 0 {
         // A zero-length slice still needs a non-null, aligned base pointer.
         return unsafe {
@@ -363,6 +447,10 @@ unsafe fn slots_mut<'a>(l: &'a mut LppList) -> &'a mut [i64] {
 /// `list_insert(list, index, value)` — insert `value` before `index`, shifting
 /// the tail right. `index` is clamped to `[0, len]`. Owning lists retain the
 /// inserted edge (like `push`).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_insert(list: *mut c_void, index: i64, value: i64) {
     if list.is_null() {
@@ -389,6 +477,10 @@ pub unsafe extern "C" fn lpp_list_insert(list: *mut c_void, index: i64, value: i
 /// `list_remove(list, index) -> value` — remove and return the slot at `index`,
 /// shifting the tail left. The reference (if any) is **transferred** to the
 /// caller, not dropped. Panics on an out-of-bounds index (like `get`).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_remove(list: *mut c_void, index: i64) -> i64 {
     if list.is_null() {
@@ -417,6 +509,10 @@ pub unsafe extern "C" fn lpp_list_remove(list: *mut c_void, index: i64) -> i64 {
 }
 
 /// `list_swap(list, i, j)` — swap two slots in place. Panics on OOB.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_swap(list: *mut c_void, i: i64, j: i64) {
     if list.is_null() {
@@ -439,6 +535,10 @@ pub unsafe extern "C" fn lpp_list_swap(list: *mut c_void, i: i64, j: i64) {
 }
 
 /// `list_reverse(list)` — reverse the slots in place.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_reverse(list: *mut c_void) {
     if list.is_null() {
@@ -451,6 +551,10 @@ pub unsafe extern "C" fn lpp_list_reverse(list: *mut c_void) {
 /// `list_truncate(list, len)` — shrink to `len` elements, dropping owned
 /// references beyond it. A `len >= current` (or negative) is a no-op / full
 /// clear respectively.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_truncate(list: *mut c_void, len: i64) {
     if list.is_null() {
@@ -470,6 +574,10 @@ pub unsafe extern "C" fn lpp_list_truncate(list: *mut c_void, len: i64) {
 }
 
 /// `list_sort(list)` — ascending signed order of the raw slots.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_sort(list: *mut c_void) {
     if list.is_null() {
@@ -480,6 +588,10 @@ pub unsafe extern "C" fn lpp_list_sort(list: *mut c_void) {
 }
 
 /// `list_sort_desc(list)` — descending signed order.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_sort_desc(list: *mut c_void) {
     if list.is_null() {
@@ -491,16 +603,24 @@ pub unsafe extern "C" fn lpp_list_sort_desc(list: *mut c_void) {
 
 /// `list_sort_u(list)` — ascending *unsigned* order (each slot compared as
 /// `u64`, so negative two's-complement values sort after all non-negatives).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_sort_u(list: *mut c_void) {
     if list.is_null() {
         return;
     }
     let l = unsafe { &mut *(list as *mut LppList) };
-    unsafe { slots_mut(l) }.sort_unstable_by(|a, b| (*a as u64).cmp(&(*b as u64)));
+    unsafe { slots_mut(l) }.sort_unstable_by_key(|a| *a as u64);
 }
 
 /// `list_index_of(list, key) -> Int` — first slot equal to `key`, or -1.
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_index_of(list: *mut c_void, key: i64) -> i64 {
     if list.is_null() {
@@ -518,6 +638,10 @@ pub unsafe extern "C" fn lpp_list_index_of(list: *mut c_void, key: i64) -> i64 {
 /// `list_binary_search(list, key) -> Int` — search an ascending-sorted list.
 /// Returns the match index, or `-(insertion_point + 1)` when absent (the Java/
 /// .NET convention the corpus asserts: a miss with insertion point 5 → -6).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_binary_search(list: *mut c_void, key: i64) -> i64 {
     if list.is_null() {
@@ -543,6 +667,10 @@ pub unsafe extern "C" fn lpp_list_binary_search(list: *mut c_void, key: i64) -> 
 /// `list_extend(dst, src)` — append every element of `src` to `dst`. Owning
 /// destinations retain each appended edge (via `push`). Safe when `dst == src`
 /// (the source slots are snapshotted before any growth).
+///
+/// # Safety
+///
+/// Any non-null list, element, or trace context pointer must be a valid L++ runtime object matching the expected element kind for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_extend(dst: *mut c_void, src: *mut c_void) {
     if dst.is_null() || src.is_null() {

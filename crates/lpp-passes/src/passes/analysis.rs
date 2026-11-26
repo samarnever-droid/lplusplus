@@ -50,10 +50,10 @@ pub fn single_def_constants(
             let entry = defs.entry(*target).or_insert((0, None));
             entry.0 += 1;
             if entry.0 == 1 {
-                if let Rvalue::Use(Operand::Constant(constant)) = value {
-                    if is_primitive_constant(constant) {
-                        entry.1 = Some(*constant);
-                    }
+                if let Rvalue::Use(Operand::Constant(constant)) = value
+                    && is_primitive_constant(constant)
+                {
+                    entry.1 = Some(*constant);
                 }
             } else {
                 entry.1 = None;
@@ -63,9 +63,7 @@ pub fn single_def_constants(
 
     defs.into_iter()
         .filter_map(|(local, (count, constant))| {
-            let Some(constant) = constant else {
-                return None;
-            };
+            let constant = constant?;
             if count != 1 {
                 return None;
             }

@@ -152,16 +152,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
-                {
-                    if let Some(text) = req
+                    && let Some(text) = req
                         .params
                         .get("textDocument")
                         .and_then(|t| t.get("text"))
                         .and_then(|s| s.as_str())
-                    {
-                        documents.insert(uri.to_string(), text.to_string());
-                        process_and_publish_diagnostics(&mut writer, uri, text, &mut ast_cache)?;
-                    }
+                {
+                    documents.insert(uri.to_string(), text.to_string());
+                    process_and_publish_diagnostics(&mut writer, uri, text, &mut ast_cache)?;
                 }
             }
             "textDocument/didChange" => {
@@ -170,24 +168,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
-                {
-                    if let Some(changes) =
+                    && let Some(changes) =
                         req.params.get("contentChanges").and_then(|c| c.as_array())
-                    {
-                        if let Some(last_change) = changes
-                            .last()
-                            .and_then(|c| c.get("text"))
-                            .and_then(|s| s.as_str())
-                        {
-                            documents.insert(uri.to_string(), last_change.to_string());
-                            process_and_publish_diagnostics(
-                                &mut writer,
-                                uri,
-                                last_change,
-                                &mut ast_cache,
-                            )?;
-                        }
-                    }
+                    && let Some(last_change) = changes
+                        .last()
+                        .and_then(|c| c.get("text"))
+                        .and_then(|s| s.as_str())
+                {
+                    documents.insert(uri.to_string(), last_change.to_string());
+                    process_and_publish_diagnostics(&mut writer, uri, last_change, &mut ast_cache)?;
                 }
             }
             "textDocument/didSave" => {
@@ -196,10 +185,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
+                    && let Some(text) = documents.get(uri)
                 {
-                    if let Some(text) = documents.get(uri) {
-                        process_and_publish_diagnostics(&mut writer, uri, text, &mut ast_cache)?;
-                    }
+                    process_and_publish_diagnostics(&mut writer, uri, text, &mut ast_cache)?;
                 }
             }
             "textDocument/completion" => {
@@ -225,34 +213,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
+                    && let Some(ast) = ast_cache.get(uri)
                 {
-                    if let Some(ast) = ast_cache.get(uri) {
-                        for item in &ast.items {
-                            if let Some(ref name) = item.name {
-                                match item.kind {
-                                    ItemKind::Function => {
-                                        completions.push(json!({
-                                            "label": name,
-                                            "kind": 3,
-                                            "detail": format!("def {}(...)", name)
-                                        }));
-                                    }
-                                    ItemKind::Struct => {
-                                        completions.push(json!({
-                                            "label": name,
-                                            "kind": 22,
-                                            "detail": format!("struct {}", name)
-                                        }));
-                                    }
-                                    ItemKind::Enum => {
-                                        completions.push(json!({
-                                            "label": name,
-                                            "kind": 13,
-                                            "detail": format!("enum {}", name)
-                                        }));
-                                    }
-                                    _ => {}
+                    for item in &ast.items {
+                        if let Some(ref name) = item.name {
+                            match item.kind {
+                                ItemKind::Function => {
+                                    completions.push(json!({
+                                        "label": name,
+                                        "kind": 3,
+                                        "detail": format!("def {}(...)", name)
+                                    }));
                                 }
+                                ItemKind::Struct => {
+                                    completions.push(json!({
+                                        "label": name,
+                                        "kind": 22,
+                                        "detail": format!("struct {}", name)
+                                    }));
+                                }
+                                ItemKind::Enum => {
+                                    completions.push(json!({
+                                        "label": name,
+                                        "kind": 13,
+                                        "detail": format!("enum {}", name)
+                                    }));
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -273,46 +260,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
+                    && let (Some(ast), Some(doc_text)) = (ast_cache.get(uri), documents.get(uri))
                 {
-                    if let (Some(ast), Some(doc_text)) = (ast_cache.get(uri), documents.get(uri)) {
-                        let mut sources = SourceMap::new();
-                        let fid = sources
-                            .add_file(uri, doc_text.clone())
-                            .unwrap_or(FileId::from_raw(1));
-                        let sf = sources.get(fid);
-                        for item in &ast.items {
-                            if let Some(ref name) = item.name {
-                                let kind = match item.kind {
-                                    ItemKind::Function => 12,
-                                    ItemKind::Struct => 23,
-                                    ItemKind::Enum => 10,
-                                    ItemKind::Trait => 11,
-                                    ItemKind::Impl => 6,
-                                    _ => continue,
-                                };
-                                let (sl, sc) = sf
-                                    .and_then(|s| s.line_column(item.span.start).ok())
-                                    .unwrap_or((1usize, 1usize));
-                                let (el, ec) = sf
-                                    .and_then(|s| s.line_column(item.span.end).ok())
-                                    .unwrap_or((sl, sc + name.len()));
-                                let sl0 = sl.saturating_sub(1);
-                                let sc0 = sc.saturating_sub(1);
-                                let el0 = el.saturating_sub(1).max(sl0);
-                                let ec0 = ec.saturating_sub(1).max(sc0 + name.len());
-                                symbols.push(json!({
-                                    "name": name,
-                                    "kind": kind,
-                                    "range": {
-                                        "start": { "line": sl0, "character": sc0 },
-                                        "end": { "line": el0, "character": ec0 }
-                                    },
-                                    "selectionRange": {
-                                        "start": { "line": sl0, "character": sc0 },
-                                        "end": { "line": sl0, "character": sc0 + name.len() }
-                                    }
-                                }));
-                            }
+                    let mut sources = SourceMap::new();
+                    let fid = sources
+                        .add_file(uri, doc_text.clone())
+                        .unwrap_or(FileId::from_raw(1));
+                    let sf = sources.get(fid);
+                    for item in &ast.items {
+                        if let Some(ref name) = item.name {
+                            let kind = match item.kind {
+                                ItemKind::Function => 12,
+                                ItemKind::Struct => 23,
+                                ItemKind::Enum => 10,
+                                ItemKind::Trait => 11,
+                                ItemKind::Impl => 6,
+                                _ => continue,
+                            };
+                            let (sl, sc) = sf
+                                .and_then(|s| s.line_column(item.span.start).ok())
+                                .unwrap_or((1usize, 1usize));
+                            let (el, ec) = sf
+                                .and_then(|s| s.line_column(item.span.end).ok())
+                                .unwrap_or((sl, sc + name.len()));
+                            let sl0 = sl.saturating_sub(1);
+                            let sc0 = sc.saturating_sub(1);
+                            let el0 = el.saturating_sub(1).max(sl0);
+                            let ec0 = ec.saturating_sub(1).max(sc0 + name.len());
+                            symbols.push(json!({
+                                "name": name,
+                                "kind": kind,
+                                "range": {
+                                    "start": { "line": sl0, "character": sc0 },
+                                    "end": { "line": el0, "character": ec0 }
+                                },
+                                "selectionRange": {
+                                    "start": { "line": sl0, "character": sc0 },
+                                    "end": { "line": sl0, "character": sc0 + name.len() }
+                                }
+                            }));
                         }
                     }
                 }
@@ -333,42 +319,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
+                    && let Some(doc_text) = documents.get(uri)
+                    && let Some(pos) = req.params.get("position")
                 {
-                    if let Some(doc_text) = documents.get(uri) {
-                        if let Some(pos) = req.params.get("position") {
-                            let line_idx =
-                                pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
-                            let char_idx =
-                                pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
-                            if let Some(line) = doc_text.lines().nth(line_idx) {
-                                let word = extract_word_at_col(line, char_idx);
-                                if !word.is_empty() {
-                                    if let Some(decl_line) = doc_text.lines().find(|l| {
-                                        let t = l.trim();
-                                        t.starts_with(&format!("def {word}("))
-                                            || t.starts_with(&format!("async def {word}("))
-                                            || t.starts_with(&format!("unsafe def {word}("))
-                                            || t.starts_with(&format!("struct {word}"))
-                                            || t.starts_with(&format!("enum {word}"))
-                                            || t.starts_with(&format!("trait {word}"))
-                                            || t.starts_with(&format!("type {word}"))
-                                    }) {
-                                        hover_val = format!("```lpp\n{}\n```", decl_line.trim());
-                                    }
-                                }
-                                if hover_val.starts_with("### L++ Language Symbol") {
-                                    if line.contains("def ") {
-                                        hover_val = "### L++ Function Declaration\nDefines a statically type-checked function.".to_string();
-                                    } else if line.contains("struct ") {
-                                        hover_val = "### L++ Struct Declaration\nDefines an ARC/stack composite struct type.".to_string();
-                                    } else if line.contains("enum ") {
-                                        hover_val = "### L++ Enum Declaration\nDefines an algebraic data type with exhaustive pattern matching.".to_string();
-                                    } else if line.contains("unsafe") {
-                                        hover_val = "### `unsafe` Block / Function\nPermits checked raw pointers, MMIO, and low-level intrinsics.".to_string();
-                                    } else if line.contains("VectorI64x") {
-                                        hover_val = "### `VectorI64x2` / `VectorI64x4`\nHardware 128-bit / 256-bit integer SIMD vector.".to_string();
-                                    }
-                                }
+                    let line_idx = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+                    let char_idx =
+                        pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
+                    if let Some(line) = doc_text.lines().nth(line_idx) {
+                        let word = extract_word_at_col(line, char_idx);
+                        if !word.is_empty()
+                            && let Some(decl_line) = doc_text.lines().find(|l| {
+                                let t = l.trim();
+                                t.starts_with(&format!("def {word}("))
+                                    || t.starts_with(&format!("async def {word}("))
+                                    || t.starts_with(&format!("unsafe def {word}("))
+                                    || t.starts_with(&format!("struct {word}"))
+                                    || t.starts_with(&format!("enum {word}"))
+                                    || t.starts_with(&format!("trait {word}"))
+                                    || t.starts_with(&format!("type {word}"))
+                            })
+                        {
+                            hover_val = format!("```lpp\n{}\n```", decl_line.trim());
+                        }
+                        if hover_val.starts_with("### L++ Language Symbol") {
+                            if line.contains("def ") {
+                                hover_val = "### L++ Function Declaration\nDefines a statically type-checked function.".to_string();
+                            } else if line.contains("struct ") {
+                                hover_val = "### L++ Struct Declaration\nDefines an ARC/stack composite struct type.".to_string();
+                            } else if line.contains("enum ") {
+                                hover_val = "### L++ Enum Declaration\nDefines an algebraic data type with exhaustive pattern matching.".to_string();
+                            } else if line.contains("unsafe") {
+                                hover_val = "### `unsafe` Block / Function\nPermits checked raw pointers, MMIO, and low-level intrinsics.".to_string();
+                            } else if line.contains("VectorI64x") {
+                                hover_val = "### `VectorI64x2` / `VectorI64x4`\nHardware 128-bit / 256-bit integer SIMD vector.".to_string();
                             }
                         }
                     }
@@ -394,34 +377,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
+                    && let Some(doc_text) = documents.get(uri)
+                    && let Some(pos) = req.params.get("position")
                 {
-                    if let Some(doc_text) = documents.get(uri) {
-                        if let Some(pos) = req.params.get("position") {
-                            let line_idx =
-                                pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
-                            if let Some(line) = doc_text.lines().nth(line_idx) {
-                                // Extract word under position
-                                let char_idx =
-                                    pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0)
-                                        as usize;
-                                let word = extract_word_at_col(line, char_idx);
-                                if !word.is_empty() {
-                                    // Search current document first
-                                    for (i, l) in doc_text.lines().enumerate() {
-                                        if l.contains(&format!("def {}", word))
-                                            || l.contains(&format!("struct {}", word))
-                                            || l.contains(&format!("enum {}", word))
-                                        {
-                                            locations.push(json!({
-                                                "uri": uri,
-                                                "range": {
-                                                    "start": { "line": i, "character": 0 },
-                                                    "end": { "line": i, "character": l.len() }
-                                                }
-                                            }));
-                                            break;
+                    let line_idx = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+                    if let Some(line) = doc_text.lines().nth(line_idx) {
+                        // Extract word under position
+                        let char_idx =
+                            pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
+                        let word = extract_word_at_col(line, char_idx);
+                        if !word.is_empty() {
+                            // Search current document first
+                            for (i, l) in doc_text.lines().enumerate() {
+                                if l.contains(&format!("def {}", word))
+                                    || l.contains(&format!("struct {}", word))
+                                    || l.contains(&format!("enum {}", word))
+                                {
+                                    locations.push(json!({
+                                        "uri": uri,
+                                        "range": {
+                                            "start": { "line": i, "character": 0 },
+                                            "end": { "line": i, "character": l.len() }
                                         }
-                                    }
+                                    }));
+                                    break;
                                 }
                             }
                         }
@@ -443,18 +422,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get("textDocument")
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
+                    && let Some(text) = documents.get(uri)
                 {
-                    if let Some(text) = documents.get(uri) {
-                        let formatted = format_source(text);
-                        let line_count = text.lines().count();
-                        edits.push(json!({
-                            "range": {
-                                "start": { "line": 0, "character": 0 },
-                                "end": { "line": line_count + 1, "character": 0 }
-                            },
-                            "newText": formatted
-                        }));
-                    }
+                    let formatted = format_source(text);
+                    let line_count = text.lines().count();
+                    edits.push(json!({
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": line_count + 1, "character": 0 }
+                        },
+                        "newText": formatted
+                    }));
                 }
 
                 let response = JsonRpcResponse {

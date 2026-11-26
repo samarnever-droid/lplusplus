@@ -18,13 +18,11 @@ pub fn inspect_object_t(input: &Path) -> Result<(), LinkError> {
         println!("format: archive");
         println!("path: {}", input.display());
         let mut n = 0usize;
-        for member in archive.members() {
-            if let Ok(m) = member {
-                let name = String::from_utf8_lossy(m.name());
-                if let Ok(data) = m.data(&*bytes) {
-                    println!("  member {name}  {} bytes", data.len());
-                    n += 1;
-                }
+        for m in archive.members().flatten() {
+            let name = String::from_utf8_lossy(m.name());
+            if let Ok(data) = m.data(&*bytes) {
+                println!("  member {name}  {} bytes", data.len());
+                n += 1;
             }
         }
         println!("members: {n}");
@@ -62,10 +60,11 @@ pub fn inspect_object_t(input: &Path) -> Result<(), LinkError> {
     println!("symbols: defined={defined} undefined={undefined} weak={weak} common={common}");
     println!("undefined:");
     for s in file.symbols().filter(|s| s.is_undefined()) {
-        if let Ok(n) = s.name() {
-            if !n.is_empty() && !n.starts_with('.') {
-                println!("  {n}");
-            }
+        if let Ok(n) = s.name()
+            && !n.is_empty()
+            && !n.starts_with('.')
+        {
+            println!("  {n}");
         }
     }
     println!("relocations: {reloc_count}");
@@ -129,25 +128,22 @@ pub fn sniff_format(path: &Path) -> &'static str {
     if is_archive_bytes(&bytes) {
         // Prefer the first real member.
         if let Ok(ar) = ArchiveFile::parse(&*bytes) {
-            for m in ar.members() {
-                if let Ok(m) = m {
-                    if let Ok(d) = m.data(&*bytes) {
-                        if d.len() >= 4 {
-                            if &d[0..4] == b"\x7fELF" {
-                                return "elf";
-                            }
-                            let machine = u16::from_le_bytes([d[0], d[1]]);
-                            if machine == 0x8664 || machine == 0xAA64 || machine == 0x14C {
-                                return "pe";
-                            }
-                            let be = u32::from_be_bytes([d[0], d[1], d[2], d[3]]);
-                            let le = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
-                            const MACHO: [u32; 4] =
-                                [0xFEED_FACE, 0xFEED_FACF, 0xCAFE_BABE, 0xCAFE_D00D];
-                            if MACHO.contains(&be) || MACHO.contains(&le) {
-                                return "macho";
-                            }
-                        }
+            for m in ar.members().flatten() {
+                if let Ok(d) = m.data(&*bytes)
+                    && d.len() >= 4
+                {
+                    if &d[0..4] == b"\x7fELF" {
+                        return "elf";
+                    }
+                    let machine = u16::from_le_bytes([d[0], d[1]]);
+                    if machine == 0x8664 || machine == 0xAA64 || machine == 0x14C {
+                        return "pe";
+                    }
+                    let be = u32::from_be_bytes([d[0], d[1], d[2], d[3]]);
+                    let le = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
+                    const MACHO: [u32; 4] = [0xFEED_FACE, 0xFEED_FACF, 0xCAFE_BABE, 0xCAFE_D00D];
+                    if MACHO.contains(&be) || MACHO.contains(&le) {
+                        return "macho";
                     }
                 }
             }
@@ -285,10 +281,10 @@ fn resolve_lib(
     };
     candidates.insert(0, name.to_string());
     let mut search = paths.to_vec();
-    if let Some(parent) = p_name.parent() {
-        if !parent.as_os_str().is_empty() {
-            search.push(parent.to_path_buf());
-        }
+    if let Some(parent) = p_name.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        search.push(parent.to_path_buf());
     }
     search.push(PathBuf::from("."));
     search.push(PathBuf::from("/usr/lib"));

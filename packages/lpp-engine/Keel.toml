@@ -1,0 +1,8 @@
+[package]
+name = "lpp-engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pure L++ lightweight game and rendering engine"
+
+[dependencies]

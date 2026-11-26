@@ -1118,13 +1118,12 @@ fn recompute_concurrency(
                                 }
                             }
                         }
-                        Rvalue::Await(Operand::Copy(task)) => {
+                        Rvalue::Await(Operand::Copy(task))
                             if concurrent_cells.contains(&(fn_id, task))
                                 && local_ty(target)
-                                    .is_some_and(|ty| verify_is_tracked_type(types, ty))
-                            {
-                                changed |= concurrent_cells.insert((fn_id, target));
-                            }
+                                    .is_some_and(|ty| verify_is_tracked_type(types, ty)) =>
+                        {
+                            changed |= concurrent_cells.insert((fn_id, target));
                         }
                         _ => {}
                     }
@@ -1386,7 +1385,7 @@ pub fn verify_ownership_plan(
             });
         }
     }
-    for (&(function, local), _) in &expectation.cells {
+    for &(function, local) in expectation.cells.keys() {
         if !seen_cells.contains(&(function, local)) {
             errors.push(OwnershipPlanError {
                 kind: OwnershipPlanErrorKind::MissingCell { function, local },
@@ -1471,7 +1470,7 @@ pub fn verify_ownership_plan(
             }
         }
     }
-    for (function, _) in &expectation.arenas {
+    for function in expectation.arenas.keys() {
         if !plan.arenas.iter().any(|arena| &arena.function == function) {
             errors.push(OwnershipPlanError {
                 kind: OwnershipPlanErrorKind::MissingArena {

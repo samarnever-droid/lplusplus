@@ -1,5 +1,15 @@
 use super::*;
 
+pub(super) struct ClosureLowerSpec {
+    pub(super) expression: ExprId,
+    pub(super) parameters: IdRange<LocalId>,
+    pub(super) body: BodyId,
+    pub(super) enclosing_source: HirItemId,
+    pub(super) substitution: TypeSubstitution,
+    pub(super) capture_locals: Vec<MirLocalId>,
+    pub(super) function_type: TypeId,
+}
+
 impl<'input> MirBuilder<'input> {
     pub(super) fn new(
         package: &'input HirPackage,
@@ -310,14 +320,17 @@ impl<'input> MirBuilder<'input> {
     /// followed by the closure parameters.
     pub(super) fn lower_closure_function(
         &mut self,
-        expression: ExprId,
-        parameters: IdRange<LocalId>,
-        body: BodyId,
-        enclosing_source: HirItemId,
-        substitution: TypeSubstitution,
-        capture_locals: Vec<MirLocalId>,
-        function_type: TypeId,
+        spec: ClosureLowerSpec,
     ) -> Result<MirFunctionId, MirBuildError> {
+        let ClosureLowerSpec {
+            expression,
+            parameters,
+            body,
+            enclosing_source,
+            substitution,
+            capture_locals,
+            function_type,
+        } = spec;
         let ExpressionKind::Closure { .. } = self.package.expressions[expression].kind else {
             unreachable!("closure lowering receives closure expressions only");
         };

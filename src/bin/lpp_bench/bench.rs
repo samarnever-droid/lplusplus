@@ -241,10 +241,8 @@ pub(super) fn run_full_bench(
         );
         eprintln!("  tmp artifacts:    {} KB", disk_usage_kb(&tmp));
     }
-    if show_mem {
-        if let Some(rss) = read_peak_rss_kb() {
-            eprintln!("  Peak RSS:         {} MB", rss as f64 / 1024.0);
-        }
+    if show_mem && let Some(rss) = read_peak_rss_kb() {
+        eprintln!("  Peak RSS:         {} MB", rss as f64 / 1024.0);
     }
 
     BenchReport {
@@ -344,35 +342,33 @@ pub(super) fn run_self_tests() -> bool {
             false
         };
 
-        if !linked {
-            if let Some(ref cc) = cc {
-                let runtime = root.join("lpp_runtime.c");
-                let mut cmd = Command::new(cc);
-                if cc.contains("cl.exe") || cc == "cl" {
-                    cmd.args([
-                        "/nologo",
-                        "/O2",
-                        &obj.to_string_lossy(),
-                        &runtime.to_string_lossy(),
-                        &format!("/Fe:{}", exe.display()),
-                    ]);
-                } else {
-                    cmd.args([
-                        "-O2",
-                        &obj.to_string_lossy(),
-                        &runtime.to_string_lossy(),
-                        "-o",
-                        &exe.to_string_lossy(),
-                    ]);
-                    if !cfg!(target_os = "macos") {
-                        cmd.arg("-pthread");
-                    }
+        if !linked && let Some(ref cc) = cc {
+            let runtime = root.join("lpp_runtime.c");
+            let mut cmd = Command::new(cc);
+            if cc.contains("cl.exe") || cc == "cl" {
+                cmd.args([
+                    "/nologo",
+                    "/O2",
+                    &obj.to_string_lossy(),
+                    &runtime.to_string_lossy(),
+                    &format!("/Fe:{}", exe.display()),
+                ]);
+            } else {
+                cmd.args([
+                    "-O2",
+                    &obj.to_string_lossy(),
+                    &runtime.to_string_lossy(),
+                    "-o",
+                    &exe.to_string_lossy(),
+                ]);
+                if !cfg!(target_os = "macos") {
+                    cmd.arg("-pthread");
                 }
-                cmd.stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .ok();
             }
+            cmd.stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok();
         }
 
         if exe.exists() {

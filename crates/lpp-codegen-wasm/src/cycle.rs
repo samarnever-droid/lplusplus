@@ -67,11 +67,11 @@ pub(crate) fn compute_shared_types(
             match agg.kind {
                 MirAggregateKind::Struct => {
                     for &f_id in program.aggregate_fields(agg) {
-                        if let Some(f) = program.field(f_id) {
-                            if is_managed(types, f.ty) {
-                                edges.entry(agg.ty).or_default().insert(f.ty);
-                                nodes.insert(f.ty);
-                            }
+                        if let Some(f) = program.field(f_id)
+                            && is_managed(types, f.ty)
+                        {
+                            edges.entry(agg.ty).or_default().insert(f.ty);
+                            nodes.insert(f.ty);
                         }
                     }
                 }
@@ -79,11 +79,11 @@ pub(crate) fn compute_shared_types(
                     for &v_id in program.aggregate_variants(agg) {
                         if let Some(v) = program.variant(v_id) {
                             for &f_id in program.variant_fields(v) {
-                                if let Some(f) = program.field(f_id) {
-                                    if is_managed(types, f.ty) {
-                                        edges.entry(agg.ty).or_default().insert(f.ty);
-                                        nodes.insert(f.ty);
-                                    }
+                                if let Some(f) = program.field(f_id)
+                                    && is_managed(types, f.ty)
+                                {
+                                    edges.entry(agg.ty).or_default().insert(f.ty);
+                                    nodes.insert(f.ty);
                                 }
                             }
                         }
@@ -99,27 +99,27 @@ pub(crate) fn compute_shared_types(
         }
         let is_async = matches!(func.kind, MirFunctionKind::Async);
         for &p_id in program.function_parameters(func) {
-            if let Some(local) = program.local(p_id) {
-                if is_managed(types, local.ty) {
-                    nodes.insert(local.ty);
-                    if is_async {
-                        async_arg_types.insert(local.ty);
-                    }
+            if let Some(local) = program.local(p_id)
+                && is_managed(types, local.ty)
+            {
+                nodes.insert(local.ty);
+                if is_async {
+                    async_arg_types.insert(local.ty);
                 }
             }
         }
         for &l_id in program.function_locals(func) {
-            if let Some(local) = program.local(l_id) {
-                if is_managed(types, local.ty) {
-                    nodes.insert(local.ty);
-                }
+            if let Some(local) = program.local(l_id)
+                && is_managed(types, local.ty)
+            {
+                nodes.insert(local.ty);
             }
         }
         for &b_id in program.function_blocks(func) {
             if let Some(block) = program.block(b_id) {
                 for &inst_id in program.block_instructions(block) {
-                    if let Some(inst) = program.instruction(inst_id) {
-                        if let InstructionKind::Assign {
+                    if let Some(inst) = program.instruction(inst_id)
+                        && let InstructionKind::Assign {
                             value:
                                 Rvalue::Call {
                                     callee: Operand::Function(callee_id),
@@ -127,19 +127,16 @@ pub(crate) fn compute_shared_types(
                                 },
                             ..
                         } = &inst.kind
-                        {
-                            if program
-                                .function(*callee_id)
-                                .is_some_and(|f| matches!(f.kind, MirFunctionKind::Async))
+                        && program
+                            .function(*callee_id)
+                            .is_some_and(|f| matches!(f.kind, MirFunctionKind::Async))
+                    {
+                        for arg in program.operands(*arguments) {
+                            if let Some(ty) = operand_ty(program, arg)
+                                && is_managed(types, ty)
                             {
-                                for arg in program.operands(*arguments) {
-                                    if let Some(ty) = operand_ty(program, arg) {
-                                        if is_managed(types, ty) {
-                                            async_arg_types.insert(ty);
-                                            nodes.insert(ty);
-                                        }
-                                    }
-                                }
+                                async_arg_types.insert(ty);
+                                nodes.insert(ty);
                             }
                         }
                     }
@@ -278,8 +275,8 @@ fn tarjan_sccs(
             if frame.next_idx < frame.nbrs.len() {
                 let w = frame.nbrs[frame.next_idx];
                 frame.next_idx += 1;
-                if !indices.contains_key(&w) {
-                    indices.insert(w, index_counter);
+                if let std::collections::btree_map::Entry::Vacant(e) = indices.entry(w) {
+                    e.insert(index_counter);
                     lowlink.insert(w, index_counter);
                     index_counter += 1;
                     tarjan_stack.push(w);
@@ -352,10 +349,7 @@ fn emit_set_free_bin(fb: &mut FB, bin_idx: u32, new_head: u32) {
 }
 
 /// Lowers `H::ArcAlloc`, `H::Retain`, or `H::Release` with cycle-collector support.
-pub(crate) fn lower_arc_helper(
-    env: &Env<'_>,
-    h: H,
-) -> Result<(Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
+pub(crate) fn lower_arc_helper(env: &Env<'_>, h: H) -> Result<crate::LoweredFunc, CodegenError> {
     match h {
         H::ArcAlloc => Ok(lower_cycle_arc_alloc()),
         H::Retain => Ok(lower_cycle_retain()),
@@ -1924,37 +1918,35 @@ fn emit_collect_cycles(collect_round_idx: u32) -> Func {
 /// Emits a `mark_collectible` pass-through call when `has_cycles` and `ty` is
 /// cycle-capable, leaving the pointer on the WASM value stack.
 pub(crate) fn maybe_mark_collectible(env: &Env<'_>, fb: &mut FB, ty: TypeId) {
-    if let Some(mark_idx) = env.mark_collectible_idx {
-        if env.shared_types.contains(&ty) {
-            fb.call(mark_idx);
-        }
+    if let Some(mark_idx) = env.mark_collectible_idx
+        && env.shared_types.contains(&ty)
+    {
+        fb.call(mark_idx);
     }
 }
 
 /// Emits a `mark_collectible` pass-through call when any closure (`Function`)
 /// type in the module is cycle-capable.
 pub(crate) fn maybe_mark_closure_collectible(env: &Env<'_>, fb: &mut FB) {
-    if let Some(mark_idx) = env.mark_collectible_idx {
-        if env
+    if let Some(mark_idx) = env.mark_collectible_idx
+        && env
             .shared_types
             .iter()
             .any(|&t| matches!(env.types.kind(t), TypeKind::Function { .. }))
-        {
-            fb.call(mark_idx);
-        }
+    {
+        fb.call(mark_idx);
     }
 }
 
 /// Emits a `mark_collectible` pass-through call when any `Task` type in the
 /// module is cycle-capable.
 pub(crate) fn maybe_mark_task_collectible(env: &Env<'_>, fb: &mut FB) {
-    if let Some(mark_idx) = env.mark_collectible_idx {
-        if env
+    if let Some(mark_idx) = env.mark_collectible_idx
+        && env
             .shared_types
             .iter()
             .any(|&t| matches!(env.types.kind(t), TypeKind::Task(_)))
-        {
-            fb.call(mark_idx);
-        }
+    {
+        fb.call(mark_idx);
     }
 }

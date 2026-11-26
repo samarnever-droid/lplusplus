@@ -25,6 +25,9 @@ unsafe fn buf_data_mut(ptr: *mut u8) -> *mut u8 {
     unsafe { ptr.add(8) }
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI; any raw pointer or buffer handle arguments must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_alloc(size: i64) -> i64 {
     if size < 0 {
@@ -44,6 +47,9 @@ pub unsafe extern "C" fn lpp_buf_alloc(size: i64) -> i64 {
     buf as usize as i64
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_free(ptr: i64) {
     if ptr != 0 {
@@ -66,6 +72,9 @@ extern "C" fn release_deferred_buffers() {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_free_at_exit(ptr: i64) {
     if ptr == 0 {
@@ -94,6 +103,9 @@ pub unsafe extern "C" fn lpp_buf_free_at_exit(ptr: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_len(ptr: i64) -> i64 {
     if ptr == 0 {
@@ -102,6 +114,9 @@ pub unsafe extern "C" fn lpp_buf_len(ptr: i64) -> i64 {
     unsafe { buf_size(ptr as usize as *const u8) }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get8(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -115,6 +130,9 @@ pub unsafe extern "C" fn lpp_buf_get8(ptr: i64, offset: i64) -> i64 {
     unsafe { i64::from(*buf_data(p).add(offset as usize)) }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set8(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -130,6 +148,9 @@ pub unsafe extern "C" fn lpp_buf_set8(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set32le(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -146,6 +167,9 @@ pub unsafe extern "C" fn lpp_buf_set32le(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get32le(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -163,6 +187,9 @@ pub unsafe extern "C" fn lpp_buf_get32le(ptr: i64, offset: i64) -> i64 {
     i64::from(u32::from_le_bytes(bytes))
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set16le(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -179,6 +206,9 @@ pub unsafe extern "C" fn lpp_buf_set16le(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get16le(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -196,6 +226,9 @@ pub unsafe extern "C" fn lpp_buf_get16le(ptr: i64, offset: i64) -> i64 {
     i64::from(u16::from_le_bytes(bytes))
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set16be(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -212,6 +245,9 @@ pub unsafe extern "C" fn lpp_buf_set16be(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get16be(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -229,6 +265,9 @@ pub unsafe extern "C" fn lpp_buf_get16be(ptr: i64, offset: i64) -> i64 {
     i64::from(u16::from_be_bytes(bytes))
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set32be(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -245,6 +284,9 @@ pub unsafe extern "C" fn lpp_buf_set32be(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get32be(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -262,6 +304,9 @@ pub unsafe extern "C" fn lpp_buf_get32be(ptr: i64, offset: i64) -> i64 {
     i64::from(u32::from_be_bytes(bytes))
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set64le(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -278,6 +323,9 @@ pub unsafe extern "C" fn lpp_buf_set64le(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get64le(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -295,6 +343,9 @@ pub unsafe extern "C" fn lpp_buf_get64le(ptr: i64, offset: i64) -> i64 {
     u64::from_le_bytes(bytes) as i64
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_set64be(ptr: i64, offset: i64, value: i64) {
     if ptr == 0 || offset < 0 {
@@ -311,6 +362,9 @@ pub unsafe extern "C" fn lpp_buf_set64be(ptr: i64, offset: i64, value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_get64be(ptr: i64, offset: i64) -> i64 {
     if ptr == 0 || offset < 0 {
@@ -328,6 +382,9 @@ pub unsafe extern "C" fn lpp_buf_get64be(ptr: i64, offset: i64) -> i64 {
     u64::from_be_bytes(bytes) as i64
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_copy(dst: i64, dst_off: i64, src: i64, src_off: i64, len: i64) {
     if dst == 0 || src == 0 || len <= 0 || dst_off < 0 || src_off < 0 {
@@ -349,6 +406,9 @@ pub unsafe extern "C" fn lpp_buf_copy(dst: i64, dst_off: i64, src: i64, src_off:
     }
 }
 
+/// # Safety
+///
+/// Caller must uphold the L++ C FFI ABI; any raw pointer or buffer handle arguments must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_read(path: *const c_char) -> i64 {
     if path.is_null() {
@@ -374,6 +434,9 @@ pub unsafe extern "C" fn lpp_buf_read(path: *const c_char) -> i64 {
     buf
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_write(path: *const c_char, ptr: i64) -> i64 {
     if path.is_null() || ptr == 0 {
@@ -387,10 +450,10 @@ pub unsafe extern "C" fn lpp_buf_write(path: *const c_char, ptr: i64) -> i64 {
         return -1;
     }
     let slice = unsafe { std::slice::from_raw_parts(buf_data(p), size as usize) };
-    if let Some(parent) = std::path::Path::new(path_str.as_ref()).parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+    if let Some(parent) = std::path::Path::new(path_str.as_ref()).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = std::fs::create_dir_all(parent);
     }
     match std::fs::write(path_str.as_ref(), slice) {
         Ok(()) => 0,
@@ -398,6 +461,9 @@ pub unsafe extern "C" fn lpp_buf_write(path: *const c_char, ptr: i64) -> i64 {
     }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_crc32(ptr: i64, off: i64, len: i64) -> i64 {
     if ptr == 0 || off < 0 || len < 0 {
@@ -424,6 +490,9 @@ pub unsafe extern "C" fn lpp_buf_crc32(ptr: i64, off: i64, len: i64) -> i64 {
     i64::from(crc ^ 0xFFFF_FFFF)
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_to_str(ptr: i64, off: i64, len: i64) -> *mut c_char {
     if ptr == 0 || off < 0 || len < 0 {
@@ -438,11 +507,17 @@ pub unsafe extern "C" fn lpp_buf_to_str(ptr: i64, off: i64, len: i64) -> *mut c_
     unsafe { arc_string(data) }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_read_str(ptr: i64, offset: i64, len: i64) -> *mut c_char {
     unsafe { lpp_buf_to_str(ptr, offset, len) }
 }
 
+/// # Safety
+///
+/// Caller must pass a valid buffer address previously returned by `lpp_buf_alloc` (or 0 where handled) and ensure any accessed offset/length lies within the allocated buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_buf_write_str(ptr: i64, offset: i64, str_ptr: *const c_char) -> i64 {
     if ptr == 0 || str_ptr.is_null() || offset < 0 {

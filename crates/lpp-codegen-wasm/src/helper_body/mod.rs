@@ -6,16 +6,27 @@ mod io;
 mod strings_basic;
 mod strings_convert;
 
+pub(super) struct HelperImports<'a> {
+    pub(super) fd_helper_idx: u32,
+    pub(super) fd_write_import_idx: u32,
+    pub(super) fd_read_import_idx: u32,
+    pub(super) proc_exit_import_idx: u32,
+    pub(super) import_index: &'a BTreeMap<&'a str, u32>,
+}
+
 pub(super) fn emit_helper_body(
     fb: &mut FB,
     h: H,
     env: &Env<'_>,
-    fd_helper_idx: u32,
-    fd_write_import_idx: u32,
-    fd_read_import_idx: u32,
-    proc_exit_import_idx: u32,
-    import_index: &BTreeMap<&str, u32>,
+    imports: &HelperImports<'_>,
 ) -> Result<(), CodegenError> {
+    let HelperImports {
+        fd_helper_idx,
+        fd_write_import_idx,
+        fd_read_import_idx,
+        proc_exit_import_idx,
+        ..
+    } = *imports;
     match h {
         H::FdWrite
         | H::FdRead
@@ -40,16 +51,7 @@ pub(super) fn emit_helper_body(
         | H::Alloc
         | H::ArcAlloc
         | H::Retain
-        | H::Release => io::emit(
-            fb,
-            h,
-            env,
-            fd_helper_idx,
-            fd_write_import_idx,
-            fd_read_import_idx,
-            proc_exit_import_idx,
-            import_index,
-        )?,
+        | H::Release => io::emit(fb, h, env, imports)?,
         H::ListNew
         | H::ListPushI64
         | H::ListPushF64

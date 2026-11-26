@@ -1,5 +1,11 @@
 use super::*;
 
+pub(super) struct BinaryOpShape {
+    pub(super) ty: CLType,
+    pub(super) signed: bool,
+    pub(super) string_eq: bool,
+}
+
 impl<'m> Lowering<'m> {
     /// Integer `sdiv`/`srem` with L++ semantics: a zero divisor is
     /// the defined runtime panic (the oracle's `DivisionByZero`,
@@ -72,12 +78,15 @@ impl<'m> Lowering<'m> {
         &mut self,
         builder: &mut FunctionBuilder,
         operator: BinaryOperator,
-        ty: CLType,
-        signed: bool,
-        string_eq: bool,
+        shape: BinaryOpShape,
         l: Value,
         r: Value,
     ) -> Result<Value, CodegenError> {
+        let BinaryOpShape {
+            ty,
+            signed,
+            string_eq,
+        } = shape;
         let mut compare = |cc_int: IntCC, cc_float: FloatCC| -> Value {
             let bool_val = match ty {
                 cltypes::F64 => builder.ins().fcmp(cc_float, l, r),

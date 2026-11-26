@@ -308,7 +308,7 @@ fn poll_socket(socket: &SocketClone, timeout_ms: i64) -> i64 {
         if rc > 0 && (pfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
             return 1;
         }
-        return 0;
+        0
     }
 
     #[cfg(not(unix))]
@@ -322,13 +322,13 @@ fn set_keepalive(socket: &SocketClone, enable: bool) -> bool {
     #[cfg(unix)]
     unsafe {
         let value: libc::c_int = if enable { 1 } else { 0 };
-        return libc::setsockopt(
+        libc::setsockopt(
             raw_fd(socket),
             libc::SOL_SOCKET,
             libc::SO_KEEPALIVE,
             (&value as *const libc::c_int).cast(),
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-        ) == 0;
+        ) == 0
     }
 
     #[cfg(not(unix))]
@@ -339,6 +339,10 @@ fn set_keepalive(socket: &SocketClone, enable: bool) -> bool {
 }
 
 /// `net_connect(host, port) -> Int`.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_connect(host: *const c_char, port: i64) -> i64 {
     let Some(host) = cstr_lossy(host) else {
@@ -354,6 +358,10 @@ pub unsafe extern "C" fn lpp_net_connect(host: *const c_char, port: i64) -> i64 
 }
 
 /// `net_dial(host, port, timeout_ms) -> Int`.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_dial(host: *const c_char, port: i64, timeout_ms: i64) -> i64 {
     let Some(host) = cstr_lossy(host) else {
@@ -369,6 +377,10 @@ pub unsafe extern "C" fn lpp_net_dial(host: *const c_char, port: i64, timeout_ms
 }
 
 /// `net_listen(port) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_listen(port: i64) -> i64 {
     let Some(port) = port_u16(port) else {
@@ -381,6 +393,10 @@ pub unsafe extern "C" fn lpp_net_listen(port: i64) -> i64 {
 }
 
 /// `net_accept(listener) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_accept(listener: i64) -> i64 {
     let Some(SocketClone::Listener(listener)) = clone_socket(listener) else {
@@ -396,6 +412,10 @@ pub unsafe extern "C" fn lpp_net_accept(listener: i64) -> i64 {
 }
 
 /// `net_accept_timeout(listener, timeout_ms) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_accept_timeout(listener: i64, timeout_ms: i64) -> i64 {
     let Some(SocketClone::Listener(listener)) = clone_socket(listener) else {
@@ -458,6 +478,10 @@ fn send_bytes(handle: i64, data: &[u8]) -> i64 {
 }
 
 /// `net_send_all(handle, data) -> Int`.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_send_all(handle: i64, data: *const c_char) -> i64 {
     if data.is_null() {
@@ -467,12 +491,20 @@ pub unsafe extern "C" fn lpp_net_send_all(handle: i64, data: *const c_char) -> i
 }
 
 /// `net_send(handle, data) -> Int` — complete-write semantics, matching v1.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_send(handle: i64, data: *const c_char) -> i64 {
     unsafe { lpp_net_send_all(handle, data) }
 }
 
 /// `net_recv(handle, max_bytes) -> Str`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_recv(handle: i64, max_bytes: i64) -> *mut c_char {
     if max_bytes <= 0 {
@@ -499,22 +531,34 @@ pub unsafe extern "C" fn lpp_net_recv(handle: i64, max_bytes: i64) -> *mut c_cha
 }
 
 /// `net_recv_udp(handle, max_bytes) -> Str`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_recv_udp(handle: i64, max_bytes: i64) -> *mut c_char {
     unsafe { lpp_net_recv(handle, max_bytes) }
 }
 
 /// `net_close(handle)`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_close(handle: i64) {
-    if let Some(socket) = take_socket(handle) {
-        if let Socket::Stream(stream) = socket {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
+    if let Some(socket) = take_socket(handle)
+        && let Socket::Stream(stream) = socket
+    {
+        let _ = stream.shutdown(Shutdown::Both);
     }
 }
 
 /// `net_set_timeout(handle, milliseconds) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_set_timeout(handle: i64, milliseconds: i64) -> i64 {
     if milliseconds <= 0 {
@@ -531,6 +575,10 @@ pub unsafe extern "C" fn lpp_net_set_timeout(handle: i64, milliseconds: i64) -> 
 }
 
 /// `net_set_deadline(handle, read_ms, write_ms) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_set_deadline(handle: i64, read_ms: i64, write_ms: i64) -> i64 {
     let Some(socket) = clone_socket(handle) else {
@@ -546,6 +594,10 @@ pub unsafe extern "C" fn lpp_net_set_deadline(handle: i64, read_ms: i64, write_m
 }
 
 /// `net_set_nonblocking(handle, enable) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_set_nonblocking(handle: i64, enable: i64) -> i64 {
     let Some(socket) = clone_socket(handle) else {
@@ -559,6 +611,10 @@ pub unsafe extern "C" fn lpp_net_set_nonblocking(handle: i64, enable: i64) -> i6
 }
 
 /// `net_poll(handle, timeout_ms) -> Int` — readiness for reading/accepting.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_poll(handle: i64, timeout_ms: i64) -> i64 {
     let Some(socket) = clone_socket(handle) else {
@@ -568,6 +624,10 @@ pub unsafe extern "C" fn lpp_net_poll(handle: i64, timeout_ms: i64) -> i64 {
 }
 
 /// `net_set_keepalive(handle, enable, idle_s, interval_s, count) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_set_keepalive(
     handle: i64,
@@ -587,6 +647,10 @@ pub unsafe extern "C" fn lpp_net_set_keepalive(
 }
 
 /// `net_dial_udp(host, port, timeout_ms) -> Int`.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_dial_udp(host: *const c_char, port: i64, timeout_ms: i64) -> i64 {
     let Some(host) = cstr_lossy(host) else {
@@ -607,16 +671,20 @@ pub unsafe extern "C" fn lpp_net_dial_udp(host: *const c_char, port: i64, timeou
     if socket.connect(addr).is_err() {
         return 0;
     }
-    if timeout_ms > 0 {
-        if let Some(timeout) = duration_ms(timeout_ms) {
-            let _ = socket.set_read_timeout(Some(timeout));
-            let _ = socket.set_write_timeout(Some(timeout));
-        }
+    if timeout_ms > 0
+        && let Some(timeout) = duration_ms(timeout_ms)
+    {
+        let _ = socket.set_read_timeout(Some(timeout));
+        let _ = socket.set_write_timeout(Some(timeout));
     }
     store_socket(Socket::Udp(socket))
 }
 
 /// `net_listen_udp(port) -> Int`.
+///
+/// # Safety
+///
+/// Caller must invoke this networking FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_listen_udp(port: i64) -> i64 {
     let Some(port) = port_u16(port) else {
@@ -630,6 +698,10 @@ pub unsafe extern "C" fn lpp_net_listen_udp(port: i64) -> i64 {
 
 /// `net_resolve(host) -> Str` — first IPv4 address when available, else the
 /// first resolved address, else the empty string.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_net_resolve(host: *const c_char) -> *mut c_char {
     let Some(host) = cstr_lossy(host) else {
@@ -715,6 +787,10 @@ fn http_round_trip(host: &str, port: u16, request: &[u8], timeout_ms: i64) -> Ve
 
 /// `http_get(url, timeout_ms) -> Str` — minimal HTTP/1.1 over the `net_*`
 /// primitives; HTTPS is intentionally outside this ABI.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_http_get(url: *const c_char, timeout_ms: i64) -> *mut c_char {
     let Some(url) = cstr_lossy(url) else {
@@ -731,6 +807,10 @@ pub unsafe extern "C" fn lpp_http_get(url: *const c_char, timeout_ms: i64) -> *m
 }
 
 /// `http_post(url, data, content_type, timeout_ms) -> Str`.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_http_post(
     url: *const c_char,

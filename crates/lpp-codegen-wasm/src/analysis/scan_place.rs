@@ -4,7 +4,7 @@ use super::*;
 /// a bare function value is a 16-byte capsule on the ARC heap (5D2b
 /// slice 2; slice 3 extends it to async functions, whose capsule
 /// points at the task thunk with an empty task-env tuple).
-pub(crate) fn scan_operand_class(
+pub(super) fn scan_operand_class(
     lower: &mut ScanLower,
     operand: &Operand,
 ) -> Result<Class, CodegenError> {

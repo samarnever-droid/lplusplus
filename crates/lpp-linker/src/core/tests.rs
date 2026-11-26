@@ -1,3 +1,4 @@
+use super::pe_support::generate_base_relocs_from_rvas;
 use super::*;
 
 #[test]

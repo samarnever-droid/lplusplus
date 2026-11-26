@@ -128,12 +128,20 @@ unsafe fn new_with_mode(arc_values: i32) -> *mut c_void {
 }
 
 /// `map_new()` — a fresh map holding plain `i64` values.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ runtime C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_new() -> *mut c_void {
     unsafe { new_with_mode(0) }
 }
 
 /// `map_new_arc()` — a map whose values are ARC-managed pointers.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ runtime C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_new_arc() -> *mut c_void {
     unsafe { new_with_mode(1) }
@@ -250,12 +258,20 @@ unsafe fn put_internal(m: *mut LppMap, key: i64, val: i64, is_str: i32) {
 }
 
 /// `map_put(m, int_key, int_val)`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_put(map: *mut c_void, key: i64, val: i64) {
     unsafe { put_internal(map as *mut LppMap, key, val, 0) };
 }
 
 /// `map_put(m, str_key, int_val)`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_put_str(map: *mut c_void, key: *const c_char, val: i64) {
     unsafe { put_internal(map as *mut LppMap, key as i64, val, 1) };
@@ -318,18 +334,30 @@ unsafe fn get_str(map: *mut c_void, key: *const c_char) -> i64 {
 }
 
 /// `map_get(m, int_key)` → value or `0`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_get(map: *mut c_void, key: i64) -> i64 {
     unsafe { get_int(map, key) }
 }
 
 /// `map_get(m, str_key)` → value or `0`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_get_str(map: *mut c_void, key: *const c_char) -> i64 {
     unsafe { get_str(map, key) }
 }
 
 /// `map_has(m, int_key)` → `1`/`0`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_has(map: *mut c_void, key: i64) -> i64 {
     if map.is_null() {
@@ -358,6 +386,10 @@ pub unsafe extern "C" fn lpp_map_has(map: *mut c_void, key: i64) -> i64 {
 }
 
 /// `map_has(m, str_key)` → `1`/`0`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_has_str(map: *mut c_void, key: *const c_char) -> i64 {
     if map.is_null() || key.is_null() {
@@ -389,6 +421,10 @@ pub unsafe extern "C" fn lpp_map_has_str(map: *mut c_void, key: *const c_char) -
 }
 
 /// `map_len(m)`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_len(map: *mut c_void) -> i64 {
     if map.is_null() {
@@ -398,6 +434,10 @@ pub unsafe extern "C" fn lpp_map_len(map: *mut c_void) -> i64 {
 }
 
 /// `map_remove(m, int_key)` — tombstone the entry if present.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_remove(map: *mut c_void, key: i64) {
     if map.is_null() {
@@ -430,6 +470,10 @@ pub unsafe extern "C" fn lpp_map_remove(map: *mut c_void, key: i64) {
 }
 
 /// `map_remove(m, str_key)` — tombstone the entry if present.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_remove_str(map: *mut c_void, key: *const c_char) {
     if map.is_null() || key.is_null() {
@@ -465,24 +509,40 @@ pub unsafe extern "C" fn lpp_map_remove_str(map: *mut c_void, key: *const c_char
 }
 
 /// `map_put(m, int_key, float_val)` — the float is bit-packed into the slot.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_put_float(map: *mut c_void, key: i64, val: f64) {
     unsafe { lpp_map_put(map, key, val.to_bits() as i64) };
 }
 
 /// `map_get(m, int_key)` reinterpreted as a float.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_get_float(map: *mut c_void, key: i64) -> f64 {
     f64::from_bits(unsafe { lpp_map_get(map, key) } as u64)
 }
 
 /// `map_put(m, str_key, float_val)`.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_put_str_float(map: *mut c_void, key: *const c_char, val: f64) {
     unsafe { lpp_map_put_str(map, key, val.to_bits() as i64) };
 }
 
 /// `map_get(m, str_key)` reinterpreted as a float.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_get_str_float(map: *mut c_void, key: *const c_char) -> f64 {
     f64::from_bits(unsafe { lpp_map_get_str(map, key) } as u64)
@@ -490,6 +550,10 @@ pub unsafe extern "C" fn lpp_map_get_str_float(map: *mut c_void, key: *const c_c
 
 /// `map_keys(m)` → a `List` of the live keys (a fresh ARC-owning list of string
 /// copies when any key is a string, else a plain integer list).
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_keys(map: *mut c_void) -> *mut c_void {
     if map.is_null() {
@@ -546,6 +610,10 @@ pub unsafe extern "C" fn lpp_map_keys(map: *mut c_void) -> *mut c_void {
 }
 
 /// `map_values(m)` → a `List` of the live values.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_values(map: *mut c_void) -> *mut c_void {
     if map.is_null() {
@@ -575,6 +643,10 @@ pub unsafe extern "C" fn lpp_map_values(map: *mut c_void) -> *mut c_void {
 }
 
 /// `map_clear(m)` — release managed values and zero the table.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_clear(map: *mut c_void) {
     if map.is_null() {
@@ -603,6 +675,10 @@ pub unsafe extern "C" fn lpp_map_clear(map: *mut c_void) {
 }
 
 /// `map_capacity(m)` — the current entry-table size.
+///
+/// # Safety
+///
+/// Any non-null map, key, or value pointer must be a valid L++ runtime object (or NUL-terminated C string where applicable) matching the map's key/value kind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_map_capacity(map: *mut c_void) -> i64 {
     if map.is_null() {

@@ -53,19 +53,19 @@ impl MirPass for ConstPropPass {
                     let Some(kind) = program.instruction(instruction_id).map(|i| i.kind) else {
                         continue;
                     };
-                    if let Some(replacement) = rewrite_kind(&map, kind) {
-                        if let Some(instruction) = program.instruction_mut(instruction_id) {
-                            instruction.kind = replacement;
-                        }
+                    if let Some(replacement) = rewrite_kind(&map, kind)
+                        && let Some(instruction) = program.instruction_mut(instruction_id)
+                    {
+                        instruction.kind = replacement;
                     }
                 }
                 let Some(block) = program.block(block_id) else {
                     continue;
                 };
-                if let Some(replacement) = rewrite_terminator(&map, block.terminator) {
-                    if let Some(block) = program.block_mut(block_id) {
-                        block.terminator = replacement;
-                    }
+                if let Some(replacement) = rewrite_terminator(&map, block.terminator)
+                    && let Some(block) = program.block_mut(block_id)
+                {
+                    block.terminator = replacement;
                 }
             }
         }
@@ -75,8 +75,8 @@ impl MirPass for ConstPropPass {
 
 /// Borrow the function's single-def constants and its block ids with
 /// a single immutable borrow so the caller can mutate afterwards.
-fn function_shapes<'p>(
-    program: &'p MirProgram,
+fn function_shapes(
+    program: &MirProgram,
     function_id: MirFunctionId,
 ) -> Option<(BTreeMap<MirLocalId, Constant>, Vec<BasicBlockId>)> {
     let function = program.function(function_id)?;
@@ -87,10 +87,10 @@ fn function_shapes<'p>(
 }
 
 fn rewrite_operand(map: &BTreeMap<MirLocalId, Constant>, operand: Operand) -> Operand {
-    if let Operand::Copy(local) = operand {
-        if let Some(value) = map.get(&local) {
-            return Operand::Constant(*value);
-        }
+    if let Operand::Copy(local) = operand
+        && let Some(value) = map.get(&local)
+    {
+        return Operand::Constant(*value);
     }
     operand
 }

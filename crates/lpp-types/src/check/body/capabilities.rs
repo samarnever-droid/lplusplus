@@ -267,14 +267,7 @@ impl<'hir> TypeChecker<'hir> {
             };
             if text == "pure" {
                 denied = denied.union(CapabilitySet::ALL);
-            } else if text.starts_with("pure(") {
-                return Err(self.at(
-                    item.origin,
-                    TypeError::InvalidCapabilityAttribute {
-                        attribute: text.to_owned(),
-                    },
-                ));
-            } else if text == "deny" {
+            } else if text.starts_with("pure(") || text == "deny" {
                 return Err(self.at(
                     item.origin,
                     TypeError::InvalidCapabilityAttribute {

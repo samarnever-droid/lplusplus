@@ -85,12 +85,8 @@ impl<'input> MirBuilder<'input> {
     pub(super) fn source_text(&self, span: Span) -> Option<&str> {
         let file = self.sources.get(span.file)?;
         let text = file.text();
-        let Some(start) = usize::try_from(span.start).ok() else {
-            return None;
-        };
-        let Some(end) = usize::try_from(span.end).ok() else {
-            return None;
-        };
+        let start = usize::try_from(span.start).ok()?;
+        let end = usize::try_from(span.end).ok()?;
         if start >= end || end > text.len() {
             return None;
         }

@@ -35,17 +35,16 @@ impl<'hir> TypeChecker<'hir> {
                 // and in the public signature. Rewrite the trailing slot and the
                 // cached local type so the body sees a list and call sites can
                 // recover the element type.
-                if function.variadic {
-                    if let (Some(&last_local), Some(&element)) =
+                if function.variadic
+                    && let (Some(&last_local), Some(&element)) =
                         (local_ids.last(), parameter_types.last())
-                    {
-                        let list = self
-                            .interner
-                            .intern(TypeKind::List(element))
-                            .map_err(|error| self.at(item.origin, error.into()))?;
-                        *parameter_types.last_mut().unwrap() = list;
-                        self.assignments.locals[last_local.index()] = Some(list);
-                    }
+                {
+                    let list = self
+                        .interner
+                        .intern(TypeKind::List(element))
+                        .map_err(|error| self.at(item.origin, error.into()))?;
+                    *parameter_types.last_mut().unwrap() = list;
+                    self.assignments.locals[last_local.index()] = Some(list);
                 }
                 let parameters = self
                     .interner

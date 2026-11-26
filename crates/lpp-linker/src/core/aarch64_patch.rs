@@ -51,7 +51,7 @@ fn a64_patch_adr_pg_hi21(
     let dest = s.wrapping_add_signed(a);
     let delta = page(dest) as i64 - page(p) as i64;
     let imm = delta >> 12;
-    if imm < -(1 << 20) || imm >= (1 << 20) {
+    if !(-(1 << 20)..(1 << 20)).contains(&imm) {
         return Err(format!("aarch64 ADR_PREL_PG_HI21 out of range ({delta})").into());
     }
     let immlo = (imm as u32) & 3;
@@ -91,7 +91,7 @@ fn a64_patch_condbr19(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Res
         return Err("aarch64 CONDBR19 not aligned".into());
     }
     let imm = disp >> 2;
-    if imm < -(1 << 18) || imm >= (1 << 18) {
+    if !(-(1 << 18)..(1 << 18)).contains(&imm) {
         return Err(format!("aarch64 CONDBR19 out of range ({disp})").into());
     }
     let instr = a64_read(buf, off)?;
@@ -109,7 +109,7 @@ fn a64_patch_tstbr14(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Resu
         return Err("aarch64 TSTBR14 not aligned".into());
     }
     let imm = disp >> 2;
-    if imm < -(1 << 13) || imm >= (1 << 13) {
+    if !(-(1 << 13)..(1 << 13)).contains(&imm) {
         return Err(format!("aarch64 TSTBR14 out of range ({disp})").into());
     }
     let instr = a64_read(buf, off)?;
@@ -143,7 +143,7 @@ fn a64_patch_movw(
 fn a64_patch_adr_lo21(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let imm = dest as i64 - p as i64;
-    if imm < -(1 << 20) || imm >= (1 << 20) {
+    if !(-(1 << 20)..(1 << 20)).contains(&imm) {
         return Err(format!("aarch64 ADR_PREL_LO21 out of range ({imm})").into());
     }
     let immlo = (imm as u32) & 3;

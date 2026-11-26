@@ -177,9 +177,7 @@ impl Interpreter<'_> {
                     InstructionKind::Assign { target, value } => {
                         let target_type = self.program.local(target).unwrap().ty;
                         let value = self.eval_rvalue(
-                            function_id,
-                            current,
-                            instruction.origin,
+                            (function_id, current, instruction.origin),
                             value,
                             &mut frame,
                             depth,
@@ -187,15 +185,15 @@ impl Interpreter<'_> {
                         )?;
                         // Cell death on reassignment: the old value's
                         // reference is dropped before the new one lands.
-                        if self.arc.is_some() {
-                            if let Some(old) = frame.get(target).cloned() {
-                                self.drop_reference(
-                                    &old,
-                                    Some(function_id),
-                                    Some(current),
-                                    Some(instruction.origin),
-                                )?;
-                            }
+                        if self.arc.is_some()
+                            && let Some(old) = frame.get(target).cloned()
+                        {
+                            self.drop_reference(
+                                &old,
+                                Some(function_id),
+                                Some(current),
+                                Some(instruction.origin),
+                            )?;
                         }
                         frame.set(target, value);
                     }
@@ -402,9 +400,7 @@ impl Interpreter<'_> {
 
     pub(super) fn eval_rvalue(
         &mut self,
-        function: MirFunctionId,
-        block: BasicBlockId,
-        origin: OriginId,
+        site: (MirFunctionId, BasicBlockId, OriginId),
         value: Rvalue,
         frame: &mut Frame,
         depth: usize,
@@ -412,6 +408,7 @@ impl Interpreter<'_> {
         // heap allocations so the pinned set resolves per node.
         produced: Option<TypeId>,
     ) -> Result<RuntimeValue, InterpreterError> {
+        let (function, block, origin) = site;
         match value {
             Rvalue::Use(operand) => {
                 let value = self.eval_operand(function, block, origin, operand, frame)?;

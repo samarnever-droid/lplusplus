@@ -1,10 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(
-    clippy::collapsible_if,
-    clippy::question_mark,
-    clippy::needless_lifetimes,
-    clippy::unnecessary_lazy_evaluations
-)]
 
 mod manager;
 mod passes;

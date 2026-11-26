@@ -151,8 +151,8 @@ fn civil_from_days(z: u64) -> (u64, u64, u64) {
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
     let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u64; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u64; // [1, 12]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
     ((if m <= 2 { y + 1 } else { y }) as u64, m, d)
 }
 
@@ -223,15 +223,16 @@ pub fn hash_sources(dir: &Path) -> BTreeMap<String, String> {
                     continue;
                 }
                 walk(&p, base, out);
-            } else if metadata.is_file() && p.extension().is_some_and(|x| x == "lpp") {
-                if let Some(h) = hash_file(&p) {
-                    let rel = p
-                        .strip_prefix(base)
-                        .unwrap_or(&p)
-                        .to_string_lossy()
-                        .to_string();
-                    out.insert(rel.replace('\\', "/"), h);
-                }
+            } else if metadata.is_file()
+                && p.extension().is_some_and(|x| x == "lpp")
+                && let Some(h) = hash_file(&p)
+            {
+                let rel = p
+                    .strip_prefix(base)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .to_string();
+                out.insert(rel.replace('\\', "/"), h);
             }
         }
     }

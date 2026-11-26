@@ -144,13 +144,7 @@ fn field_layouts_with_options(
     let mut offset = start;
     // A payload that starts at 0 aligns to 1 (the v1 rule); an offset
     // payload (enum fields) is 8-aligned.
-    let mut aggregate_align = if packed {
-        1
-    } else if start == 0 {
-        1
-    } else {
-        8
-    };
+    let mut aggregate_align = if packed || start == 0 { 1 } else { 8 };
     if let Some(forced) = min_align {
         aggregate_align = aggregate_align.max(forced.max(1));
     }

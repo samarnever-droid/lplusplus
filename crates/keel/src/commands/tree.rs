@@ -27,10 +27,7 @@ fn node_for(
             tag: "member",
         };
     }
-    if let Some(p) = lock
-        .map(|l| l.packages.iter().find(|p| p.name == name))
-        .flatten()
-    {
+    if let Some(p) = lock.and_then(|l| l.packages.iter().find(|p| p.name == name)) {
         return Node {
             version: p.version.clone(),
             tag: if p.source == "registry" {
@@ -65,31 +62,29 @@ fn member_version_for(name: &str, ws: &lpp_pm::Workspace) -> Option<String> {
         .map(|m| m.manifest.version().to_string())
 }
 
+struct TreeRenderCtx<'a> {
+    out: &'a mut String,
+    branch: &'a mut BTreeSet<String>,
+    lock: Option<&'a lpp_pm::Lock>,
+    member_versions: &'a BTreeSet<String>,
+    ws: &'a lpp_pm::Workspace,
+    unlocked_seen: &'a mut bool,
+}
+
 /// Recursively render one dependency subtree (deterministic; cycle-safe).
-fn render_node(
-    out: &mut String,
-    name: &str,
-    req: &str,
-    prefix: &str,
-    is_last: bool,
-    branch: &mut BTreeSet<String>,
-    lock: Option<&lpp_pm::Lock>,
-    member_versions: &BTreeSet<String>,
-    ws: &lpp_pm::Workspace,
-    unlocked_seen: &mut bool,
-) {
-    let node = node_for(name, req, lock, member_versions, ws);
+fn render_node(ctx: &mut TreeRenderCtx<'_>, name: &str, req: &str, prefix: &str, is_last: bool) {
+    let node = node_for(name, req, ctx.lock, ctx.member_versions, ctx.ws);
     if node.tag == "unlocked" {
-        *unlocked_seen = true;
+        *ctx.unlocked_seen = true;
     }
-    let cyclic = !branch.insert(name.to_string());
+    let cyclic = !ctx.branch.insert(name.to_string());
     let connector = if is_last { "└── " } else { "├── " };
     let version = if cyclic {
         format!("{} (cyclic)", node.version)
     } else {
         node.version.clone()
     };
-    out.push_str(&format!(
+    ctx.out.push_str(&format!(
         "{prefix}{connector}{name} v{version} ({})\n",
         node.tag
     ));
@@ -98,7 +93,8 @@ fn render_node(
     }
 
     // Children: the lock's dependency names (declaration order).
-    let children: Vec<String> = lock
+    let children: Vec<String> = ctx
+        .lock
         .map(|l| {
             l.packages
                 .iter()
@@ -109,20 +105,9 @@ fn render_node(
         .unwrap_or_default();
     for (i, child) in children.iter().enumerate() {
         let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
-        render_node(
-            out,
-            child,
-            "*",
-            &child_prefix,
-            i + 1 == children.len(),
-            branch,
-            lock,
-            member_versions,
-            ws,
-            unlocked_seen,
-        );
+        render_node(ctx, child, "*", &child_prefix, i + 1 == children.len());
     }
-    branch.remove(name);
+    ctx.branch.remove(name);
 }
 
 /// Build the full `keel tree` output. `only` restricts to one member name.
@@ -176,18 +161,15 @@ fn render_into(text: &mut String, dir: &Path, only: Option<&str>) -> Result<(), 
         for (i, (name, req)) in deps.iter().enumerate() {
             let mut branch = BTreeSet::new();
             branch.insert(m.name().to_string());
-            render_node(
-                &mut out,
-                name,
-                req,
-                "",
-                i + 1 == deps.len(),
-                &mut branch,
-                lock.as_ref(),
-                &member_names,
-                &ws,
-                &mut unlocked_here,
-            );
+            let mut ctx = TreeRenderCtx {
+                out: &mut out,
+                branch: &mut branch,
+                lock: lock.as_ref(),
+                member_versions: &member_names,
+                ws: &ws,
+                unlocked_seen: &mut unlocked_here,
+            };
+            render_node(&mut ctx, name, req, "", i + 1 == deps.len());
         }
         if deps.is_empty() {
             out.push_str("(no dependencies)\n");

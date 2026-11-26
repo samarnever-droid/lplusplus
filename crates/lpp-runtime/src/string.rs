@@ -46,6 +46,10 @@ fn is_ws(c: u8) -> bool {
 }
 
 /// `str_concat(a, b)` — ARC-allocated concatenation.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     let ab = unsafe { cstr_bytes(a) };
@@ -58,6 +62,10 @@ pub unsafe extern "C" fn lpp_str_concat(a: *const c_char, b: *const c_char) -> *
 
 /// `str_repeat(s, n)` — ARC-allocated `s` repeated `n` times. `n <= 0` (or an
 /// empty/NULL `s`) yields the empty string.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_repeat(s: *const c_char, n: i64) -> *mut c_char {
     let sb = unsafe { cstr_bytes(s) };
@@ -75,6 +83,10 @@ pub unsafe extern "C" fn lpp_str_repeat(s: *const c_char, n: i64) -> *mut c_char
 /// returning an owning ARC list of ARC strings. Always yields at least one
 /// element (the whole string when `delim` is absent), matching the C builtin:
 /// a trailing delimiter produces a final empty piece.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_split(s: *const c_char, delim: i64) -> *mut c_void {
     let sb = unsafe { cstr_bytes(s) };
@@ -94,6 +106,10 @@ pub unsafe extern "C" fn lpp_str_split(s: *const c_char, delim: i64) -> *mut c_v
 }
 
 /// `str_find(haystack, needle)` — first index via `strstr`, or -1.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_find(haystack: *const c_char, needle: *const c_char) -> i64 {
     if haystack.is_null() || needle.is_null() {
@@ -110,6 +126,10 @@ pub unsafe extern "C" fn lpp_str_find(haystack: *const c_char, needle: *const c_
 /// `str_replace(s, old, new)` — ARC-allocated with all occurrences replaced.
 /// Always returns a NEW owned string (never the argument), so the caller can
 /// release it independently of the input.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_replace(
     s: *const c_char,
@@ -127,7 +147,7 @@ pub unsafe extern "C" fn lpp_str_replace(
     // Count non-overlapping occurrences (C advances by olen after each hit).
     let mut count = 0i64;
     let mut scan = sb;
-    while let Some(pos) = find_sub(scan, &ob) {
+    while let Some(pos) = find_sub(scan, ob) {
         count += 1;
         scan = &scan[pos + ob.len()..];
     }
@@ -143,7 +163,7 @@ pub unsafe extern "C" fn lpp_str_replace(
     let mut out = Vec::with_capacity(outlen as usize);
     let mut src = sb;
     while !src.is_empty() {
-        match find_sub(src, &ob) {
+        match find_sub(src, ob) {
             None => {
                 out.extend_from_slice(src);
                 break;
@@ -172,6 +192,10 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// `char_at(s, index)` — the byte at `index` as a one-character ARC string, or
 /// the immortal empty string when `index` is out of range. Byte-indexed, as in
 /// the v1 C reference (`char_at("Hello, World!", 7)` is `"W"`).
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_char_at(s: *const c_char, index: i64) -> *mut c_char {
     let bytes = unsafe { cstr_bytes(s) };
@@ -184,6 +208,10 @@ pub unsafe extern "C" fn lpp_char_at(s: *const c_char, index: i64) -> *mut c_cha
 
 /// `chr(code)` — the UTF-8 encoding of the Unicode scalar `code` as an ARC
 /// string, or the immortal empty string when `code` is not a valid scalar.
+///
+/// # Safety
+///
+/// Caller must invoke this string FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_chr(code: i64) -> *mut c_char {
     match u32::try_from(code).ok().and_then(char::from_u32) {
@@ -199,6 +227,10 @@ pub unsafe extern "C" fn lpp_chr(code: i64) -> *mut c_char {
 /// `ord(s)` — the Unicode scalar value of the first character of `s` (the
 /// inverse of `chr`), or 0 for an empty/NULL string. A malformed lead byte
 /// falls back to its raw value rather than trapping.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_ord(s: *const c_char) -> i64 {
     let bytes = unsafe { cstr_bytes(s) };
@@ -216,12 +248,11 @@ pub unsafe extern "C" fn lpp_ord(s: *const c_char) -> i64 {
     } else {
         return i64::from(lead);
     };
-    if bytes.len() > extra {
-        if let Ok(head) = std::str::from_utf8(&bytes[..extra + 1]) {
-            if let Some(c) = head.chars().next() {
-                return c as u32 as i64;
-            }
-        }
+    if bytes.len() > extra
+        && let Ok(head) = std::str::from_utf8(&bytes[..extra + 1])
+        && let Some(c) = head.chars().next()
+    {
+        return c as u32 as i64;
     }
     i64::from(lead)
 }
@@ -229,6 +260,10 @@ pub unsafe extern "C" fn lpp_ord(s: *const c_char) -> i64 {
 /// `str_substr(s, start, len)` — the ARC-allocated substring of `s` from byte
 /// `start`, `len` bytes long, clamped to the string's bounds. The immortal
 /// empty string results when `start` is out of range or `len` is non-positive.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_substr(s: *const c_char, start: i64, len: i64) -> *mut c_char {
     let bytes = unsafe { cstr_bytes(s) };
@@ -241,6 +276,10 @@ pub unsafe extern "C" fn lpp_str_substr(s: *const c_char, start: i64, len: i64) 
 }
 
 /// `str_trim(s)` — ARC-allocated with leading/trailing whitespace removed.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_trim(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -256,6 +295,10 @@ pub unsafe extern "C" fn lpp_str_trim(s: *const c_char) -> *mut c_char {
 }
 
 /// `str_contains(haystack, needle)` — 1/0.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_contains(haystack: *const c_char, needle: *const c_char) -> i64 {
     if haystack.is_null() || needle.is_null() {
@@ -265,6 +308,10 @@ pub unsafe extern "C" fn lpp_str_contains(haystack: *const c_char, needle: *cons
 }
 
 /// `str_starts_with(s, prefix)` — 1/0.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_starts_with(s: *const c_char, prefix: *const c_char) -> i64 {
     if s.is_null() || prefix.is_null() {
@@ -276,6 +323,10 @@ pub unsafe extern "C" fn lpp_str_starts_with(s: *const c_char, prefix: *const c_
 }
 
 /// `str_ends_with(s, suffix)` — 1/0.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_ends_with(s: *const c_char, suffix: *const c_char) -> i64 {
     if s.is_null() || suffix.is_null() {
@@ -287,6 +338,10 @@ pub unsafe extern "C" fn lpp_str_ends_with(s: *const c_char, suffix: *const c_ch
 }
 
 /// `str_upper(s)` — ASCII uppercase copy.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_upper(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -295,18 +350,16 @@ pub unsafe extern "C" fn lpp_str_upper(s: *const c_char) -> *mut c_char {
     let b = unsafe { cstr_bytes(s) };
     let out: Vec<u8> = b
         .iter()
-        .map(|&c| {
-            if (b'a'..=b'z').contains(&c) {
-                c - 32
-            } else {
-                c
-            }
-        })
+        .map(|&c| if c.is_ascii_lowercase() { c - 32 } else { c })
         .collect();
     unsafe { arc_string(&out) }
 }
 
 /// `str_lower(s)` — ASCII lowercase copy.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_lower(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -315,18 +368,16 @@ pub unsafe extern "C" fn lpp_str_lower(s: *const c_char) -> *mut c_char {
     let b = unsafe { cstr_bytes(s) };
     let out: Vec<u8> = b
         .iter()
-        .map(|&c| {
-            if (b'A'..=b'Z').contains(&c) {
-                c + 32
-            } else {
-                c
-            }
-        })
+        .map(|&c| if c.is_ascii_uppercase() { c + 32 } else { c })
         .collect();
     unsafe { arc_string(&out) }
 }
 
 /// `int_to_str(val)` — decimal, matching C `snprintf("%lld")`.
+///
+/// # Safety
+///
+/// Caller must invoke this string FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_int_to_str(val: i64) -> *mut c_char {
     let s = val.to_string();
@@ -334,6 +385,10 @@ pub unsafe extern "C" fn lpp_int_to_str(val: i64) -> *mut c_char {
 }
 
 /// `u64_to_str(a)` — unsigned decimal, matching C `snprintf("%llu")`.
+///
+/// # Safety
+///
+/// Caller must invoke this string FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_u64_to_str(a: i64) -> *mut c_char {
     let s = (a as u64).to_string();
@@ -341,6 +396,10 @@ pub unsafe extern "C" fn lpp_u64_to_str(a: i64) -> *mut c_char {
 }
 
 /// `u64_to_hex(a)` — lowercase hex, matching C `snprintf("%llx")`.
+///
+/// # Safety
+///
+/// Caller must invoke this string FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_u64_to_hex(a: i64) -> *mut c_char {
     let s = format!("{:x}", a as u64);
@@ -350,6 +409,10 @@ pub unsafe extern "C" fn lpp_u64_to_hex(a: i64) -> *mut c_char {
 /// `float_to_str(val)` — C `snprintf("%g")`. Delegated to libc snprintf so
 /// the output is byte-identical to the C reference (Rust's float Display
 /// uses the shortest-round-trip form, which differs from %g).
+///
+/// # Safety
+///
+/// Caller must invoke this string FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_float_to_str(val: f64) -> *mut c_char {
     let mut buf = [0u8; 64];
@@ -357,7 +420,7 @@ pub unsafe extern "C" fn lpp_float_to_str(val: f64) -> *mut c_char {
         snprintf(
             buf.as_mut_ptr().cast::<c_char>(),
             buf.len(),
-            b"%g\0".as_ptr().cast::<c_char>(),
+            c"%g".as_ptr(),
             val,
         )
     };
@@ -372,6 +435,10 @@ pub unsafe extern "C" fn lpp_float_to_str(val: f64) -> *mut c_char {
 /// `bool_to_str(val)` — "true"/"false". The parameter is `i8` (L++ `Bool`
 /// lowers to i8); reading it wider made garbage high bits decide the branch
 /// in the C history, so the ABI keeps it narrow.
+///
+/// # Safety
+///
+/// Caller must invoke this string FFI entry point according to the L++ C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_bool_to_str(val: i8) -> *mut c_char {
     let s = if val != 0 { "true" } else { "false" };
@@ -379,6 +446,10 @@ pub unsafe extern "C" fn lpp_bool_to_str(val: i8) -> *mut c_char {
 }
 
 /// `str_to_int(s)` — `strtoll(s, NULL, 10)`.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_to_int(s: *const c_char) -> i64 {
     if s.is_null() {
@@ -390,6 +461,10 @@ pub unsafe extern "C" fn lpp_str_to_int(s: *const c_char) -> i64 {
 /// `str_to_u64(s)` — the C hand-rolled parser: skip leading whitespace, then
 /// `0x`/`0X` hex or plain decimal, stopping at the first non-digit. All
 /// accumulation wraps in u64 (matching C).
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_to_u64(s: *const c_char) -> i64 {
     if s.is_null() {
@@ -406,7 +481,7 @@ pub unsafe extern "C" fn lpp_str_to_u64(s: *const c_char) -> i64 {
         while i < b.len() {
             let c = b[i];
             i += 1;
-            let d = if (b'0'..=b'9').contains(&c) {
+            let d = if c.is_ascii_digit() {
                 u64::from(c - b'0')
             } else if (b'a'..=b'f').contains(&c) {
                 u64::from(c - b'a') + 10
@@ -418,7 +493,7 @@ pub unsafe extern "C" fn lpp_str_to_u64(s: *const c_char) -> i64 {
             val = (val << 4) | d;
         }
     } else {
-        while i < b.len() && (b'0'..=b'9').contains(&b[i]) {
+        while i < b.len() && b[i].is_ascii_digit() {
             val = val.wrapping_mul(10).wrapping_add(u64::from(b[i] - b'0'));
             i += 1;
         }
@@ -428,6 +503,10 @@ pub unsafe extern "C" fn lpp_str_to_u64(s: *const c_char) -> i64 {
 
 /// `str_eq(a, b)` — 1/0. Pointer-equal short-circuit, then byte compare
 /// (matching C, including both-NULL == equal).
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_eq(a: *const c_char, b: *const c_char) -> i64 {
     if a == b {
@@ -439,6 +518,9 @@ pub unsafe extern "C" fn lpp_str_eq(a: *const c_char, b: *const c_char) -> i64 {
     i64::from(unsafe { cstr_bytes(a) } == unsafe { cstr_bytes(b) })
 }
 
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_cmp(a: *const c_char, b: *const c_char) -> i64 {
     if a == b {
@@ -460,12 +542,20 @@ pub unsafe extern "C" fn lpp_str_cmp(a: *const c_char, b: *const c_char) -> i64 
 /// `parse_int(s)` — registry alias of `str_to_int`: parse a base-10 integer
 /// from `s`. The ABI table gives `parse_int` its own symbol (`lpp_parse_int`)
 /// but identical semantics, so this delegates to the existing implementation.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_parse_int(s: *const c_char) -> i64 {
     unsafe { lpp_str_to_int(s) }
 }
 
 /// `str_len(s)` — byte length (0 for NULL).
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_len(s: *const c_char) -> i64 {
     if s.is_null() {
@@ -475,6 +565,10 @@ pub unsafe extern "C" fn lpp_str_len(s: *const c_char) -> i64 {
 }
 
 /// `str_join(list, sep)` — join a `List[Str]` with `sep` into a new ARC string.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_join(list: *mut c_void, sep: *const c_char) -> *mut c_char {
     if list.is_null() {
@@ -497,6 +591,10 @@ pub unsafe extern "C" fn lpp_str_join(list: *mut c_void, sep: *const c_char) -> 
 }
 
 /// `str_lines(s)` — split `s` into lines (`\n` or `\r\n`), returning an owning `List[Str]`.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_lines(s: *const c_char) -> *mut c_void {
     let list = unsafe { lpp_list_new_arc() };
@@ -530,6 +628,10 @@ pub unsafe extern "C" fn lpp_str_lines(s: *const c_char) -> *mut c_void {
 }
 
 /// `str_pad_left(s, width, pad)` — pad `s` on the left up to `width` bytes using `pad`.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_pad_left(
     s: *const c_char,
@@ -552,6 +654,10 @@ pub unsafe extern "C" fn lpp_str_pad_left(
 }
 
 /// `str_pad_right(s, width, pad)` — pad `s` on the right up to `width` bytes using `pad`.
+///
+/// # Safety
+///
+/// Any non-null string or list pointer argument must be a valid NUL-terminated L++ string (or runtime list) for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_pad_right(
     s: *const c_char,

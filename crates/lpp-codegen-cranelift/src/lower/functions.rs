@@ -1,16 +1,27 @@
 use super::*;
 
+pub(super) struct FunctionLowerSpec<'a> {
+    pub(super) mir_id: MirFunctionId,
+    pub(super) function: &'a MirFunction,
+    pub(super) export_name: &'a str,
+    pub(super) source_name: &'a str,
+    pub(super) debug_info: bool,
+}
+
 impl<'m> Lowering<'m> {
     pub(super) fn lower_function(
         &mut self,
         program: &MirProgram,
         types: &TypeInterner,
-        mir_id: MirFunctionId,
-        function: &MirFunction,
-        export_name: &str,
-        source_name: &str,
-        debug_info: bool,
+        spec: FunctionLowerSpec<'_>,
     ) -> Result<(), CodegenError> {
+        let FunctionLowerSpec {
+            mir_id,
+            function,
+            export_name,
+            source_name,
+            debug_info,
+        } = spec;
         let func_id = *self
             .func_ids
             .get(&mir_id)

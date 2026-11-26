@@ -21,17 +21,17 @@ use crate::plan::{OwnershipPlan, compute_ownership_plan};
 /// Whether the type can name a heap value (a runtime heap node, or an
 /// inline tuple that can own one).
 fn is_heap_type(types: &TypeInterner, ty: TypeId) -> bool {
-    match types.kind(ty) {
+    matches!(
+        types.kind(ty),
         TypeKind::Function { .. }
-        | TypeKind::List(_)
-        | TypeKind::Slice(_)
-        | TypeKind::Task(_)
-        | TypeKind::Tuple(_)
-        | TypeKind::Map { .. }
-        | TypeKind::Nominal { .. } => true,
-        TypeKind::Primitive(PrimitiveType::String) => true,
-        _ => false,
-    }
+            | TypeKind::List(_)
+            | TypeKind::Slice(_)
+            | TypeKind::Task(_)
+            | TypeKind::Tuple(_)
+            | TypeKind::Map { .. }
+            | TypeKind::Nominal { .. }
+            | TypeKind::Primitive(PrimitiveType::String)
+    )
 }
 
 /// Whether a builtin moves (consumes) its positional value argument.
@@ -324,8 +324,8 @@ impl ConcurBlockState {
             }
         }
         for (&obj, &cid) in &other.closure_fn {
-            if !self.closure_fn.contains_key(&obj) {
-                self.closure_fn.insert(obj, cid);
+            if let std::collections::btree_map::Entry::Vacant(e) = self.closure_fn.entry(obj) {
+                e.insert(cid);
                 changed = true;
             }
         }
@@ -635,10 +635,10 @@ fn resolve_call_targets(
                 return out.into_iter().collect();
             }
             if let Some(mir_local) = program.local(local)
-                && matches!(
-                    program.functions().find(|(_, f)| f.ty == mir_local.ty),
-                    Some(_)
-                )
+                && program
+                    .functions()
+                    .find(|(_, f)| f.ty == mir_local.ty)
+                    .is_some()
             {
                 return program
                     .functions()
@@ -659,16 +659,24 @@ fn operand_objs(state: &ConcurBlockState, op: Operand) -> BTreeSet<ObjId> {
     }
 }
 
-fn check_spawn_transfer(
-    program: &MirProgram,
+struct SpawnCheckCtx<'a> {
+    program: &'a MirProgram,
     function_id: MirFunctionId,
-    spawn_op: Operand,
-    extra_args: &[Operand],
-    live_after: &BTreeSet<MirLocalId>,
-    state: &mut ConcurBlockState,
-    summaries: &mut ConcurSummaries,
-    summary_changed: &mut bool,
-) {
+    live_after: &'a BTreeSet<MirLocalId>,
+    state: &'a mut ConcurBlockState,
+    summaries: &'a mut ConcurSummaries,
+    summary_changed: &'a mut bool,
+}
+
+fn check_spawn_transfer(ctx: SpawnCheckCtx<'_>, spawn_op: Operand, extra_args: &[Operand]) {
+    let SpawnCheckCtx {
+        program,
+        function_id,
+        live_after,
+        state,
+        summaries,
+        summary_changed,
+    } = ctx;
     let params: BTreeSet<MirLocalId> = program
         .function(function_id)
         .map(|f| program.function_parameters(f).iter().copied().collect())
@@ -901,14 +909,16 @@ fn apply_concur_block(
                                 .is_some_and(|f| f.kind == MirFunctionKind::Async)
                         }) {
                             check_spawn_transfer(
-                                program,
-                                function_id,
+                                SpawnCheckCtx {
+                                    program,
+                                    function_id,
+                                    live_after,
+                                    state: &mut state,
+                                    summaries,
+                                    summary_changed,
+                                },
                                 callee,
                                 args,
-                                live_after,
-                                &mut state,
-                                summaries,
-                                summary_changed,
                             );
                         }
                         for cid in callees {
@@ -949,14 +959,16 @@ fn apply_concur_block(
                         let obj = ObjId::Alloc(function_id, inst_id);
                         new_target_objs.insert(obj);
                         check_spawn_transfer(
-                            program,
-                            function_id,
+                            SpawnCheckCtx {
+                                program,
+                                function_id,
+                                live_after,
+                                state: &mut state,
+                                summaries,
+                                summary_changed,
+                            },
                             op,
                             &[],
-                            live_after,
-                            &mut state,
-                            summaries,
-                            summary_changed,
                         );
                     }
                     Rvalue::Builtin { builtin, arguments } => {
@@ -969,14 +981,16 @@ fn apply_concur_block(
                         } else if bname == "thread_spawn" {
                             if let Some(&first) = args.first() {
                                 check_spawn_transfer(
-                                    program,
-                                    function_id,
+                                    SpawnCheckCtx {
+                                        program,
+                                        function_id,
+                                        live_after,
+                                        state: &mut state,
+                                        summaries,
+                                        summary_changed,
+                                    },
                                     first,
                                     &args[1..],
-                                    live_after,
-                                    &mut state,
-                                    summaries,
-                                    summary_changed,
                                 );
                             }
                         } else {
@@ -1255,7 +1269,7 @@ fn apply_block(
         .expect("verified MIR retains every block");
     let mut state: State = in_state.clone();
     let mut violations: BTreeMap<(BasicBlockId, MirLocalId), OriginId> = BTreeMap::new();
-    let mut current_origin = block.origin;
+    let mut current_origin: OriginId;
     macro_rules! check_local {
         ($local:expr) => {{
             let local = $local;
@@ -1402,14 +1416,11 @@ fn apply_block(
         }
     }
     current_origin = block.origin;
-    match block.terminator {
-        Terminator::Return(Some(Operand::Copy(local))) => {
-            check_local!(local);
-            if heap_locals.contains(&local) {
-                state.insert(local, Token::Dead);
-            }
+    if let Terminator::Return(Some(Operand::Copy(local))) = block.terminator {
+        check_local!(local);
+        if heap_locals.contains(&local) {
+            state.insert(local, Token::Dead);
         }
-        _ => {}
     }
     (state, violations)
 }

@@ -4,7 +4,6 @@
 //! through `clang` to relocatable native objects (`.o`) matching Cranelift's
 //! native ABI, ARC lifecycle, cycle collection, closures, async tasks,
 //! collections, SIMD, FFI, and freestanding kernel targets.
-#![allow(clippy::all, warnings)]
 
 use std::path::PathBuf;
 use std::process::Command;

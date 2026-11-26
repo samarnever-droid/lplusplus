@@ -260,10 +260,10 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, LinkError> {
 
     for sec in file.sections() {
         let name = sec.name().unwrap_or("");
-        if let object::SectionFlags::Coff { characteristics } = sec.flags() {
-            if (characteristics & 0x00000800) != 0 || (characteristics & 0x00000200) != 0 {
-                continue;
-            }
+        if let object::SectionFlags::Coff { characteristics } = sec.flags()
+            && ((characteristics & 0x00000800) != 0 || (characteristics & 0x00000200) != 0)
+        {
+            continue;
         }
         let Some(class) = classify_section(name, sec.kind()) else {
             continue;
@@ -306,10 +306,10 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, LinkError> {
                     if let Ok(v) = read_i64_at(buf, site) {
                         addend = v;
                     }
-                } else if rel.size() == 32 || rel.size() == 0 {
-                    if let Ok(v) = read_i32_at(buf, site) {
-                        addend = v as i64;
-                    }
+                } else if (rel.size() == 32 || rel.size() == 0)
+                    && let Ok(v) = read_i32_at(buf, site)
+                {
+                    addend = v as i64;
                 }
             }
             if format == OutputFormat::Macho {
@@ -366,18 +366,18 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, LinkError> {
             });
             continue;
         }
-        if let SymbolSection::Section(idx) = sym.section() {
-            if let Some((_, class, base)) = map.iter().find(|(i, _, _)| *i == idx) {
-                symbols.push(Defined {
-                    name: clean.to_string(),
-                    bind: bind_of(&sym),
-                    class: *class,
-                    offset: *base as u64 + sym.address(),
-                    size: sym.size(),
-                    align: 1,
-                    object: 0,
-                });
-            }
+        if let SymbolSection::Section(idx) = sym.section()
+            && let Some((_, class, base)) = map.iter().find(|(i, _, _)| *i == idx)
+        {
+            symbols.push(Defined {
+                name: clean.to_string(),
+                bind: bind_of(&sym),
+                class: *class,
+                offset: *base as u64 + sym.address(),
+                size: sym.size(),
+                align: 1,
+                object: 0,
+            });
         }
     }
 
@@ -419,12 +419,11 @@ fn resolve_local_target(
         || sym.kind() == SymbolKind::Section
         || clean.starts_with('.')
         || clean.starts_with('$');
-    if let SymbolSection::Section(idx) = sym.section() {
-        if let Some((_, class, base)) = map.iter().find(|(i, _, _)| *i == idx) {
-            if anonymous || sym.is_local() || clean.starts_with('.') {
-                return RelTarget::Local(*class, *base as u64 + sym.address());
-            }
-        }
+    if let SymbolSection::Section(idx) = sym.section()
+        && let Some((_, class, base)) = map.iter().find(|(i, _, _)| *i == idx)
+        && (anonymous || sym.is_local() || clean.starts_with('.'))
+    {
+        return RelTarget::Local(*class, *base as u64 + sym.address());
     }
     if anonymous {
         return RelTarget::Local(SectionClass::Text, 0);

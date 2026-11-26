@@ -448,10 +448,10 @@ pub fn write_pe_with_options_t(
     put_u16(&mut pe, nt + 4, machine.pe_machine());
     put_u16(&mut pe, nt + 6, section_count);
     // TimeDateStamp: 0 for reproducible builds (honour SOURCE_DATE_EPOCH if set)
-    if let Ok(v) = env::var("SOURCE_DATE_EPOCH") {
-        if let Ok(ts) = v.parse::<u32>() {
-            put_u32(&mut pe, nt + 8, ts);
-        }
+    if let Ok(v) = env::var("SOURCE_DATE_EPOCH")
+        && let Ok(ts) = v.parse::<u32>()
+    {
+        put_u32(&mut pe, nt + 8, ts);
     }
     put_u16(&mut pe, nt + 20, opt_size);
     let mut chars: u16 = 0x0002 | 0x0020; // EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
@@ -518,9 +518,8 @@ pub fn write_pe_with_options_t(
         if merged.syms.contains_key("WinMain")
             || merged.syms.contains_key("wWinMain")
             || merged.syms.contains_key("WinMainCRTStartup")
+            || opts.shared
         {
-            PeSubsystem::Windows
-        } else if matches!(opts.subsystem, None) && opts.shared {
             PeSubsystem::Windows
         } else {
             PeSubsystem::Console
@@ -556,10 +555,7 @@ pub fn write_pe_with_options_t(
         for &(start, len) in &merged.pdata_ranges {
             if len >= 12 && start + len <= merged.rodata.len() {
                 let slice = &mut merged.rodata[start..start + len];
-                let mut entries: Vec<[u8; 12]> = slice
-                    .chunks_exact(12)
-                    .map(|c| c.try_into().unwrap())
-                    .collect();
+                let mut entries: Vec<[u8; 12]> = slice.as_chunks::<12>().0.to_vec();
                 entries.sort_by_key(|e| u32::from_le_bytes(e[0..4].try_into().unwrap()));
                 for (i, entry) in entries.iter().enumerate() {
                     slice[i * 12..(i + 1) * 12].copy_from_slice(entry);
@@ -782,12 +778,12 @@ fn resolve_pe_target(
             if let Some(&rva) = refptr_offsets.get(name) {
                 return Ok(rva as u64);
             }
-            if let Some(inner) = name.strip_prefix(".refptr.") {
-                if let Some(sy) = merged.syms.get(inner) {
-                    return Ok(pe_sym_rva(
-                        sy, text_rva, rdata_rva, data_rva, bss_rva, tls_rva,
-                    ));
-                }
+            if let Some(inner) = name.strip_prefix(".refptr.")
+                && let Some(sy) = merged.syms.get(inner)
+            {
+                return Ok(pe_sym_rva(
+                    sy, text_rva, rdata_rva, data_rva, bss_rva, tls_rva,
+                ));
             }
             if !name.starts_with("__imp_") {
                 if let Some(&trva) = thunk_rvas.get(name) {

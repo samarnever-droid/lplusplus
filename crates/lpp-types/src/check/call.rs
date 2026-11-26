@@ -11,6 +11,15 @@ use crate::{
 
 use super::{ShadowTypeError, TypeChecker};
 
+#[derive(Clone, Copy)]
+struct MethodCallSite {
+    call_expression: ExprId,
+    callee: ExprId,
+    name: Symbol,
+    arguments: IdRange<ExprId>,
+    origin: OriginId,
+}
+
 impl<'hir> TypeChecker<'hir> {
     pub(super) fn infer_call(
         &mut self,
@@ -29,18 +38,19 @@ impl<'hir> TypeChecker<'hir> {
                 self.package.expression_binding(base),
                 Some(BindingTarget::Module(_))
             )
-        {
-            if let Some(result) = self.infer_method_call(
-                call_expression,
-                callee,
+            && let Some(result) = self.infer_method_call(
+                MethodCallSite {
+                    call_expression,
+                    callee,
+                    name,
+                    arguments,
+                    origin,
+                },
                 base,
-                name,
-                arguments,
                 parameters,
-                origin,
-            )? {
-                return Ok(result);
-            }
+            )?
+        {
+            return Ok(result);
         }
         let callee_type = if let Some(explicit_arguments) = explicit_arguments {
             if let Some(definition) = self.package.expression_definition(callee) {
@@ -90,10 +100,11 @@ impl<'hir> TypeChecker<'hir> {
         // form yields the constructed nominal directly; the per-field
         // parameter list is never unified, and MIR synthesizes the zero values
         // (see `zero_init_struct_fields`).
-        if arguments.is_empty() && self.is_struct_constructor(callee) {
-            if let TypeKind::Function { result, .. } = self.interner.kind(callee_type) {
-                return Ok(result);
-            }
+        if arguments.is_empty()
+            && self.is_struct_constructor(callee)
+            && let TypeKind::Function { result, .. } = self.interner.kind(callee_type)
+        {
+            return Ok(result);
         }
         if self.is_struct_constructor(callee) {
             return self.infer_struct_constructor_call(callee_type, &arguments, parameters, origin);
@@ -101,10 +112,11 @@ impl<'hir> TypeChecker<'hir> {
         if let Some(fixed) = self.variadic_fixed_arity(callee) {
             return self.infer_variadic_call(callee_type, &arguments, fixed, parameters, origin);
         }
-        if let Some((required, total)) = self.default_param_arity(callee) {
-            if arguments.len() >= required && arguments.len() <= total {
-                return self.infer_defaulted_call(callee_type, &arguments, parameters, origin);
-            }
+        if let Some((required, total)) = self.default_param_arity(callee)
+            && arguments.len() >= required
+            && arguments.len() <= total
+        {
+            return self.infer_defaulted_call(callee_type, &arguments, parameters, origin);
         }
         let mut argument_types = Vec::with_capacity(arguments.len());
         for argument in arguments {
@@ -379,14 +391,17 @@ impl<'hir> TypeChecker<'hir> {
     /// call inference.
     fn infer_method_call(
         &mut self,
-        call_expression: ExprId,
-        callee: ExprId,
+        site: MethodCallSite,
         base: ExprId,
-        name: Symbol,
-        arguments: IdRange<ExprId>,
         parameters: &BTreeMap<Symbol, TypeParamId>,
-        origin: OriginId,
     ) -> Result<Option<TypeId>, ShadowTypeError> {
+        let MethodCallSite {
+            call_expression,
+            callee,
+            name,
+            arguments,
+            origin,
+        } = site;
         let base_type = self.infer_expression(base, parameters)?;
         let resolved_base = self
             .inference
@@ -397,27 +412,18 @@ impl<'hir> TypeChecker<'hir> {
         // bound for typing. MIR re-resolves it to the concrete `impl` method
         // once the instance's receiver type is known.
         if let TypeKind::GenericParameter(param_id) = self.interner.kind(resolved_base) {
-            return self.infer_trait_bounded_method_call(
-                call_expression,
-                callee,
-                param_id,
-                name,
-                arguments,
-                parameters,
-                origin,
-            );
+            return self.infer_trait_bounded_method_call(site, param_id, parameters);
         }
         let TypeKind::Nominal { definition, .. } = self.interner.kind(resolved_base) else {
             return Ok(None);
         };
         // A real struct field takes precedence: `value.field()` calls the value
         // stored in the field, not a method named `field`.
-        if let Some(item) = self.aggregates.item(definition) {
-            if matches!(self.package.items[item].kind, HirItemKind::Struct(_))
-                && self.aggregates.field(item, name).is_some()
-            {
-                return Ok(None);
-            }
+        if let Some(item) = self.aggregates.item(definition)
+            && matches!(self.package.items[item].kind, HirItemKind::Struct(_))
+            && self.aggregates.field(item, name).is_some()
+        {
+            return Ok(None);
         }
         let Some(candidates) = self.method_candidates.get(&(definition, name)).cloned() else {
             return Ok(None);
@@ -452,10 +458,8 @@ impl<'hir> TypeChecker<'hir> {
             let expected_arguments = param_types.len().saturating_sub(1);
             let snapshot = self.inference.clone();
             let mut fits = argument_ids.len() == expected_arguments;
-            if fits {
-                if let Some(receiver_type) = param_types.first() {
-                    fits = self.unify(*receiver_type, resolved_base, origin).is_ok();
-                }
+            if fits && let Some(receiver_type) = param_types.first() {
+                fits = self.unify(*receiver_type, resolved_base, origin).is_ok();
             }
             if fits {
                 for (param_type, argument) in param_types.iter().skip(1).zip(argument_ids.iter()) {
@@ -514,14 +518,17 @@ impl<'hir> TypeChecker<'hir> {
     /// resolved.
     fn infer_trait_bounded_method_call(
         &mut self,
-        call_expression: ExprId,
-        callee: ExprId,
+        site: MethodCallSite,
         param_id: TypeParamId,
-        name: Symbol,
-        arguments: IdRange<ExprId>,
         parameters: &BTreeMap<Symbol, TypeParamId>,
-        origin: OriginId,
     ) -> Result<Option<TypeId>, ShadowTypeError> {
+        let MethodCallSite {
+            call_expression,
+            callee,
+            name,
+            arguments,
+            origin,
+        } = site;
         let Some(bound_ref) = self.package.type_parameters[param_id].bound else {
             return Ok(None);
         };

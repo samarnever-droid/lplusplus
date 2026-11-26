@@ -381,11 +381,13 @@ enum StartupAbi {
 ///  20  lea rdi, [rip+main]     ; main; disp @ 23, next-ip = start_off+27
 ///  27  e8 <rel32>              ; call __libc_start_main@plt; disp @ 28, next-ip = +32
 ///  32  hlt                     ; unreachable (__libc_start_main never returns)
+type ElfStartStub = (Vec<u8>, Vec<(&'static str, usize)>);
+
 fn emit_elf_start_stub_x64(
     start_off: usize,
     main_off: usize,
     abi: StartupAbi,
-) -> Result<(Vec<u8>, Vec<(&'static str, usize)>), LinkError> {
+) -> Result<ElfStartStub, LinkError> {
     match abi {
         StartupAbi::Freestanding => {
             let mut s = vec![

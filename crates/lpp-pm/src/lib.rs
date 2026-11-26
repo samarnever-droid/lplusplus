@@ -14,7 +14,6 @@
 //!   only backend (see [`backend`]).
 //!
 //! The crate is deliberately dependency-light (only `sha2`).
-#![allow(clippy::all, warnings)]
 
 pub mod address;
 pub mod backend;

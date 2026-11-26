@@ -91,6 +91,10 @@ fn registry_key(ptr: *mut c_void) -> usize {
 /// function. Called by generated code for every allocation whose type
 /// the ownership plan classified `Shared`. Tolerates null, foreign,
 /// and immortal pointers exactly like the retain/release entry points.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ cycle-collector ABI; any non-null ARC payload, trace context, and trace callback pointers must be valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_mark_collectible(ptr: *mut c_void, trace: Option<LppTraceFn>) {
     let Some(trace) = trace else { return };
@@ -141,6 +145,10 @@ pub(crate) fn note_possible_root_buffer(ptr: *mut c_void) -> bool {
 /// `ctx` is collector-internal state (a `*mut Vec<usize>`); trace
 /// functions pass it through untouched. Validity filtering happens in
 /// the collector core, so reporting a null or foreign child is safe.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ cycle-collector ABI; any non-null ARC payload, trace context, and trace callback pointers must be valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_trace_visit(ctx: *mut c_void, child: *mut c_void) {
     if ctx.is_null() || child.is_null() {
@@ -155,6 +163,10 @@ pub unsafe extern "C" fn lpp_trace_visit(ctx: *mut c_void, child: *mut c_void) {
 /// only by another cycle). Called explicitly from the generated `main`
 /// wrapper for programs with `Shared` types, and automatically when
 /// the buffer reaches `COLLECT_THRESHOLD`.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ cycle-collector ABI; any non-null ARC payload, trace context, and trace callback pointers must be valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_collect_cycles() {
     if COLLECTING.swap(true, Ordering::AcqRel) {

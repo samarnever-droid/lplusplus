@@ -46,11 +46,7 @@ pub(super) fn build_runtime_obj(tmp: &Path, freestanding_src: &Path) -> Result<P
     let cc = detect_c_compiler().ok_or("no C compiler found")?;
     let mut cmd = Command::new(&cc);
     for flag in &p.runtime_flags(&cc) {
-        if cc.contains("cl.exe") || cc == "cl" {
-            cmd.arg(flag);
-        } else {
-            cmd.arg(flag);
-        }
+        cmd.arg(flag);
     }
     let flags = p.runtime_flags(&cc);
     if cc.contains("cl.exe") || cc == "cl" {

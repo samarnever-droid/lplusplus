@@ -41,7 +41,6 @@
 //! ```
 //! Each block's terminator reassigns `current` (`goto`/`branch`) or
 //! `return`s / traps. No forward `br`, no label-distance arithmetic.
-#![allow(clippy::all, warnings)]
 
 mod analysis;
 mod cycle;
@@ -110,8 +109,10 @@ const FS_STAT: u32 = 96;
 /// `fd_seek`'s u64 output: the file size, taken by seeking to the end.
 const FS_SEEK_OUT: u32 = 104;
 const FS_SCRATCH_END: u32 = 160;
-const FS_BUF: u32 = 160;
 const POOL_START: u32 = FS_SCRATCH_END + FS_CHUNK;
+
+pub(crate) type LoweredFunc = (Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>);
+pub(crate) type NamedLoweredFunc = (String, Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>);
 const STR_HEADER: u32 = 24;
 /// WASI `rights` for a read-only open: path_open, fd_read, fd_seek, fd_tell.
 const FS_RIGHTS_BASE: i64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5) | (1 << 6) | (1 << 13);

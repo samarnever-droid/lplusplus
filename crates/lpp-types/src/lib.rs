@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::collapsible_if, clippy::too_many_arguments, clippy::map_entry)]
 
 mod aggregates;
 mod builtins;

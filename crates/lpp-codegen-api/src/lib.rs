@@ -10,7 +10,6 @@
 //! Boundaries: this crate never imports a backend, and it never
 //! resolves builtin behavior by ad-hoc string dispatch — builtin facts
 //! come from `lpp-runtime-abi`'s generated table via `BuiltinId`.
-#![allow(clippy::all, warnings)]
 
 mod backend;
 mod builtin;

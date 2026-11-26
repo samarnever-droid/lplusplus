@@ -35,13 +35,11 @@ pub fn write_elf_with_options_t(
             }
         }
     };
-    if !want_dynamic {
-        if opts.dynamic == DynamicMode::Static && !undef.is_empty() {
-            return Err(LinkError::unresolved(
-                "unresolved symbols in static link",
-                undef,
-            ));
-        }
+    if !want_dynamic && opts.dynamic == DynamicMode::Static && !undef.is_empty() {
+        return Err(LinkError::unresolved(
+            "unresolved symbols in static link",
+            undef,
+        ));
     }
 
     let page_size = opts
@@ -791,28 +789,27 @@ pub fn write_elf_with_options_t(
     }
 
     apply_elf_relocations(
-        &objects,
-        &merged,
-        machine,
-        &mut rx,
-        &mut rw,
-        rodata_off_in_text,
-        init_off_in_text,
-        fini_off_in_text,
-        data_off_in_data,
-        tls_off_in_data,
-        va_text,
-        va_rodata,
-        va_init,
-        va_fini,
-        va_data,
-        va_tls,
-        va_got,
-        va_plt,
-        plt0_size,
-        plt_entsize,
-        &got_keys,
-        tls_memsz,
+        ElfRelocationContext {
+            objects: &objects,
+            merged: &merged,
+            machine,
+            rx: &mut rx,
+            rw: &mut rw,
+            rodata_off_in_text,
+            init_off_in_text,
+            fini_off_in_text,
+            data_off_in_data,
+            tls_off_in_data,
+            va_text,
+            va_rodata,
+            va_init,
+            va_fini,
+            va_data,
+            va_tls,
+            va_got,
+            got_keys: &got_keys,
+            tls_memsz,
+        },
         lookup_va,
         lookup_size,
     )?;
@@ -857,8 +854,6 @@ pub fn write_elf_with_options_t(
         base,
         entry_va,
         page_size,
-        ehdr_size,
-        phdr_entsize,
         phnum,
         phoff,
         phdrs_bytes,
@@ -866,7 +861,6 @@ pub fn write_elf_with_options_t(
         has_note,
         has_tls,
         has_dynamic,
-        has_eh_frame,
         interp_str,
         interp_off,
         note_off,
@@ -883,14 +877,12 @@ pub fn write_elf_with_options_t(
         plt_entsize,
         dynsym_off,
         dynsym_size,
-        dynstr,
         dynstr_off,
         dynstr_size,
         hash_off,
         hash_size,
         rela_plt_off,
         rela_plt_size,
-        rx_size,
         rx_filesz,
         data_va,
         data_file,

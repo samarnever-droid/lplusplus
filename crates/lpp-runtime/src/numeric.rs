@@ -112,7 +112,7 @@ pub extern "C" fn lpp_int_pow(base: i64, exp: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn lpp_shr_u(a: i64, b: i64) -> i64 {
-    if b < 0 || b >= 64 {
+    if !(0..64).contains(&b) {
         return 0;
     }
     ((a as u64) >> b) as i64
@@ -120,7 +120,7 @@ pub extern "C" fn lpp_shr_u(a: i64, b: i64) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn lpp_shl_u(a: i64, b: i64) -> i64 {
-    if b < 0 || b >= 64 {
+    if !(0..64).contains(&b) {
         return 0;
     }
     ((a as u64) << b) as i64

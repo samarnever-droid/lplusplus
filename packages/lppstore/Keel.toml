@@ -1,0 +1,8 @@
+[package]
+name = "lppstore"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pure L++ B-tree key-value store with HTTP server"
+
+[dependencies]

@@ -200,10 +200,10 @@ impl<'hir> TypeChecker<'hir> {
             "map_remove" => Some("lpp_map_remove_str"),
             _ => None,
         } {
-            if self.builtin_argument_is_string(expression, 1) {
-                if let Some(variant) = self.builtin_index.lookup(str_variant) {
-                    return variant;
-                }
+            if self.builtin_argument_is_string(expression, 1)
+                && let Some(variant) = self.builtin_index.lookup(str_variant)
+            {
+                return variant;
             }
             return builtin;
         }
@@ -228,10 +228,10 @@ impl<'hir> TypeChecker<'hir> {
             return builtin;
         };
         let kind = self.interner.kind(resolved);
-        if matches!(kind, TypeKind::Primitive(PrimitiveType::String)) {
-            if let Some(str_len) = self.builtin_index.lookup("str_len") {
-                return str_len;
-            }
+        if matches!(kind, TypeKind::Primitive(PrimitiveType::String))
+            && let Some(str_len) = self.builtin_index.lookup("str_len")
+        {
+            return str_len;
         }
         // `len` on a slice view (`Slice[T]` or `StrSlice`) reads the view's
         // length field via `lpp_slice_len`, not the list header via
@@ -239,10 +239,9 @@ impl<'hir> TypeChecker<'hir> {
         if matches!(
             kind,
             TypeKind::Slice(_) | TypeKind::Primitive(PrimitiveType::StrSlice)
-        ) {
-            if let Some(slice_len) = self.builtin_index.lookup("slice_len") {
-                return slice_len;
-            }
+        ) && let Some(slice_len) = self.builtin_index.lookup("slice_len")
+        {
+            return slice_len;
         }
         builtin
     }

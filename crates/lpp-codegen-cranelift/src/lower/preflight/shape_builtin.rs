@@ -1,15 +1,19 @@
 use super::*;
 
 pub(super) fn check_builtin_shape(
-    program: &MirProgram,
-    types: &TypeInterner,
+    ctx: &PreflightCtx<'_>,
     target: MirLocalId,
     target_ty: TypeId,
     builtin: &BuiltinId,
     arguments: &lpp_mir::ListRange<Operand>,
-    mir_id: MirFunctionId,
     scan: &mut ScanState,
 ) -> Result<(), CodegenError> {
+    let PreflightCtx {
+        program,
+        types,
+        mir_id,
+        ..
+    } = *ctx;
     let check_operand = |operand: &Operand| operand_type(program, types, operand, mir_id);
     let local_ty = |local: MirLocalId| {
         program

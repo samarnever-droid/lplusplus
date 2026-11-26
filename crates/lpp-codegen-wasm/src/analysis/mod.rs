@@ -8,16 +8,13 @@ mod scan_place;
 mod scan_types;
 
 pub(super) use pre_scan_impl::pre_scan;
-pub(super) use scan_builtins::check_builtin;
-pub(super) use scan_instructions::{
-    check_instruction, check_list_literal, check_rvalue, register_list_load_needs,
-};
-pub(super) use scan_place::{
-    PlaceResolution, PlaceStep, collect_strings, resolve_place, rvalue_operands, scan_operand_class,
-};
-pub(super) use scan_types::{
-    SliceKind, check_terminator, list_element_of, require_bool, require_f64, require_i64,
-    require_str, slice_kind_of,
+use scan_builtins::check_builtin;
+use scan_instructions::check_instruction;
+use scan_place::scan_operand_class;
+pub(super) use scan_place::{PlaceResolution, PlaceStep, collect_strings, resolve_place};
+pub(super) use scan_types::{SliceKind, slice_kind_of};
+use scan_types::{
+    check_terminator, list_element_of, require_bool, require_f64, require_i64, require_str,
 };
 
 struct ScanLower<'a> {

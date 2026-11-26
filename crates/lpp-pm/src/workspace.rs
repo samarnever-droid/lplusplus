@@ -276,16 +276,17 @@ impl Workspace {
                 });
             }
             ready.sort_by(|&a, &b| self.members[a].name().cmp(self.members[b].name()));
-            plan.push(std::mem::take(&mut ready));
-            placed += plan.last().unwrap().len();
-            for node in plan.last().unwrap().iter() {
-                for &dep_of in &dependents[*node] {
+            let layer = std::mem::take(&mut ready);
+            placed += layer.len();
+            for &node in &layer {
+                for &dep_of in &dependents[node] {
                     indegree[dep_of] -= 1;
                     if indegree[dep_of] == 0 {
                         ready.push(dep_of);
                     }
                 }
             }
+            plan.push(layer);
         }
         Ok(plan)
     }
@@ -360,7 +361,8 @@ fn load_member(dir: &Path) -> Result<Manifest> {
 fn path_dep_names(m: &Manifest) -> Vec<String> {
     m.dependencies
         .iter()
-        .filter_map(|(n, d)| d.path().is_some().then(|| n.clone()))
+        .filter(|&(_n, d)| d.path().is_some())
+        .map(|(n, _d)| n.clone())
         .collect()
 }
 
@@ -391,7 +393,9 @@ fn expand_members(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
         return Err(PmError::BadMemberPattern(pattern.to_string()));
     }
     // Exactly one `*`: prefix/*suffix within one segment.
-    let (prefix, suffix) = pattern.split_once('*').unwrap();
+    let Some((prefix, suffix)) = pattern.split_once('*') else {
+        return Err(PmError::BadMemberPattern(pattern.to_string()));
+    };
     let parent = root.join(prefix);
     if !parent.is_dir() {
         return Ok(Vec::new());

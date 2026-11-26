@@ -15,7 +15,7 @@ impl<'input> MirBuilder<'input> {
         self.walk_body(body, &mut visit);
         let mut captures = Vec::new();
         for local in referenced {
-            if !Self::scope_is_inside(&self.package, self.package.locals[local].scope, scope) {
+            if !Self::scope_is_inside(self.package, self.package.locals[local].scope, scope) {
                 captures.push(local);
             }
         }
@@ -237,7 +237,7 @@ impl<'input> MirBuilder<'input> {
                 extended.extend(self.package.locals(parameters).iter().copied());
                 let scope = self.package.bodies[body].scope;
                 Self::collect_capture_writes(
-                    &self.package,
+                    self.package,
                     body,
                     scope,
                     &extended,

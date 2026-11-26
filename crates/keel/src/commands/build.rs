@@ -92,10 +92,11 @@ fn detect_single_src_entry(root: &Path, name: &str) -> Option<String> {
     let mut lpp_files = Vec::new();
     for entry in std::fs::read_dir(&src_dir).ok()?.flatten() {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("lpp") {
-            if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
-                lpp_files.push(format!("src/{file_name}"));
-            }
+        if path.is_file()
+            && path.extension().and_then(|e| e.to_str()) == Some("lpp")
+            && let Some(file_name) = path.file_name().and_then(|f| f.to_str())
+        {
+            lpp_files.push(format!("src/{file_name}"));
         }
     }
     if lpp_files.len() == 1 {
@@ -122,7 +123,7 @@ fn entry_point(dir: &Path) -> Result<String, String> {
 /// Replace (or create) the symlink `link` → `target`. Refuses to clobber a
 /// real directory (user data); a stale symlink/file is replaced.
 fn set_symlink(link: &Path, target: &Path) -> Result<(), String> {
-    if let Some(md) = std::fs::symlink_metadata(link).ok() {
+    if let Ok(md) = std::fs::symlink_metadata(link) {
         if md.file_type().is_symlink() || md.is_file() {
             std::fs::remove_file(link).map_err(|e| e.to_string())?;
         } else {
@@ -265,11 +266,11 @@ pub fn stage_path_deps(
 // docs/rewrite/DEP_LINKING.md (slice 11).
 // ---------------------------------------------------------------------------
 
+type RegistryDepsClosure = (lpp_pm::Lock, BTreeMap<String, (String, String)>);
+
 /// The complete reachable registry dependency closure, sourced from the
 /// validated lockfile.
-fn registry_deps_needed(
-    ws: &lpp_pm::Workspace,
-) -> Result<Option<(lpp_pm::Lock, BTreeMap<String, (String, String)>)>, String> {
+fn registry_deps_needed(ws: &lpp_pm::Workspace) -> Result<Option<RegistryDepsClosure>, String> {
     let member_names: BTreeSet<String> = ws
         .members
         .iter()
@@ -744,10 +745,10 @@ pub fn build_selected_with_flags(
                     format!("lpp {}", rows[i2].1.join(" ")),
                 ]);
             }
-            if let Err(e) = err {
-                if layer_err.is_none() {
-                    layer_err = Some(e);
-                }
+            if let Err(e) = err
+                && layer_err.is_none()
+            {
+                layer_err = Some(e);
             }
         }
         if let Some(e) = layer_err {

@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use lpp_codegen_api::layout::{AggregateIndex, AggregateLayout, aggregate_layout, tuple_layout};
-use lpp_codegen_api::{CodegenError, CodegenErrorKind, NameResolver};
+use lpp_codegen_api::{CodegenError, NameResolver};
 use lpp_mir::{
-    Constant, InstructionKind, KernelIntrinsic, MirAggregateId, MirExternalFunctionId, MirFunction,
+    Constant, InstructionKind, KernelIntrinsic, MirAggregateId, MirExternalFunctionId,
     MirFunctionId, MirFunctionKind, MirLocalId, MirLocalKind, MirProgram, MirStringId, Operand,
     PlaceProjection, Rvalue, Terminator,
 };

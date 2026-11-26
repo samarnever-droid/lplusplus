@@ -221,6 +221,9 @@ fn parse_object(input: &[u8], pos: &mut usize, depth: usize) -> Option<JsonValue
     Some(JsonValue::Object(entries))
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_json_parse(json: *const c_char) -> i64 {
     if json.is_null() {
@@ -238,6 +241,9 @@ pub unsafe extern "C" fn lpp_json_parse(json: *const c_char) -> i64 {
     ptr as i64
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_json_get_int(handle: i64, key: *const c_char) -> i64 {
     if handle == 0 || key.is_null() {
@@ -260,6 +266,9 @@ pub unsafe extern "C" fn lpp_json_get_int(handle: i64, key: *const c_char) -> i6
     0
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_json_get_str(handle: i64, key: *const c_char) -> *mut c_char {
     if handle == 0 || key.is_null() {
@@ -280,6 +289,9 @@ pub unsafe extern "C" fn lpp_json_get_str(handle: i64, key: *const c_char) -> *m
     unsafe { lpp_empty_str() as *mut c_char }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_json_get_obj(handle: i64, key: *const c_char) -> i64 {
     if handle == 0 || key.is_null() {
@@ -300,6 +312,9 @@ pub unsafe extern "C" fn lpp_json_get_obj(handle: i64, key: *const c_char) -> i6
     0
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_json_free(handle: i64) {
     if handle == 0 {
@@ -319,6 +334,10 @@ pub unsafe extern "C" fn lpp_json_free(handle: i64) {
 
 /// `json_escape(s)` — escape a string for safe embedding inside a JSON string literal
 /// (without surrounding quotes).
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_json_escape(s: *const c_char) -> *mut c_char {
     let bytes = unsafe { cstr_bytes(s) };

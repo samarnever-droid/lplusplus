@@ -2,17 +2,17 @@ use lpp_codegen_api::CodegenError;
 use lpp_codegen_api::layout::static_type_size_align;
 use lpp_mir::{Constant, KernelIntrinsic, Operand};
 use lpp_runtime_abi::generated::SemanticAbiType;
-use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
+use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeKind};
 
 use super::function::FnCtx;
 use super::plan::{builtin_descriptor_sig, intrinsic_arch_import, operand_kind};
 use super::{
-    ElementClass, IMP_ARC_MARK_COLLECTIBLE, IMP_ARC_RELEASE, IMP_ARC_RETAIN, IMP_LIST_GET,
-    IMP_LIST_GET_ARC, IMP_LIST_GET_BOOL, IMP_LIST_GET_FLOAT, IMP_LIST_LEN, IMP_LIST_NEW,
-    IMP_LIST_NEW_ARC, IMP_LIST_PUSH, IMP_LIST_PUSH_ARC, IMP_LIST_PUSH_BOOL, IMP_LIST_PUSH_FLOAT,
-    IMP_LIST_SET, IMP_LIST_SET_ARC, IMP_LIST_SET_BOOL, IMP_LIST_SET_FLOAT, IMP_LIST_TRACE,
-    IMP_PRINT_BOOL, IMP_PRINT_FLOAT, IMP_PRINT_INT, IMP_PRINT_STR, IMP_VEC_CHECKSUM, Val,
-    element_class, is_managed, is_signed_integer_kind, is_void_type, unsupported, val_of_type,
+    ElementClass, IMP_LIST_GET, IMP_LIST_GET_ARC, IMP_LIST_GET_BOOL, IMP_LIST_GET_FLOAT,
+    IMP_LIST_LEN, IMP_LIST_NEW, IMP_LIST_NEW_ARC, IMP_LIST_PUSH, IMP_LIST_PUSH_ARC,
+    IMP_LIST_PUSH_BOOL, IMP_LIST_PUSH_FLOAT, IMP_LIST_SET, IMP_LIST_SET_ARC, IMP_LIST_SET_BOOL,
+    IMP_LIST_SET_FLOAT, IMP_LIST_TRACE, IMP_PRINT_BOOL, IMP_PRINT_FLOAT, IMP_PRINT_INT,
+    IMP_PRINT_STR, IMP_VEC_CHECKSUM, Val, element_class, is_managed, is_signed_integer_kind,
+    unsupported, val_of_type,
 };
 
 impl<'a> FnCtx<'a> {

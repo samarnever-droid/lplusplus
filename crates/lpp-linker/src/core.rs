@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 mod elf_image;
 mod elf_relocations;
 use elf_image::{ElfImageContext, finish_elf_image};
-use elf_relocations::apply_elf_relocations;
+use elf_relocations::{ElfRelocationContext, apply_elf_relocations};
 
 // These shared implementation fragments stay in `core`'s privacy scope so
 // ELF, PE, Mach-O, and the CLI can use the same internal object model without
@@ -47,8 +47,6 @@ mod elf_writer;
 mod macho_writer;
 mod pe_support;
 mod pe_writer;
-
-use pe_support::*;
 
 pub use cli::{
     expand_response_files, expand_response_files_t, inspect_object, inspect_object_t, link_cli,

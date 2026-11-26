@@ -626,7 +626,7 @@ pub(super) fn build_imports(
             let dll_name_off = data.len();
             data.extend_from_slice(dll_name.as_bytes());
             data.push(0);
-            if data.len() % 2 != 0 {
+            if !data.len().is_multiple_of(2) {
                 data.push(0);
             }
             let mut hint_off = HashMap::new();
@@ -635,7 +635,7 @@ pub(super) fn build_imports(
                 data.extend_from_slice(&[0u8, 0]); // hint
                 data.extend_from_slice(f.as_bytes());
                 data.push(0);
-                if data.len() % 2 != 0 {
+                if !data.len().is_multiple_of(2) {
                     data.push(0);
                 }
                 hint_off.insert(f.clone(), h);

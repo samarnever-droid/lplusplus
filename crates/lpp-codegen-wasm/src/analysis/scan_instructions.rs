@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) fn check_instruction(
+pub(super) fn check_instruction(
     lower: &mut ScanLower<'_>,
     kind: &InstructionKind,
 ) -> Result<(), CodegenError> {

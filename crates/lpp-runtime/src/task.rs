@@ -99,10 +99,12 @@ impl WorkerDeque {
     }
 }
 
+type HandleShard = Mutex<HashMap<usize, Arc<TaskHandle>>>;
+
 struct TaskPool {
     workers: Vec<WorkerDeque>,
     injector: Mutex<VecDeque<TaskQueueItem>>,
-    shards: Box<[Mutex<HashMap<usize, Arc<TaskHandle>>>]>,
+    shards: Box<[HandleShard]>,
     sleeping: AtomicUsize,
     park_mu: Mutex<()>,
     park_cv: Condvar,
@@ -110,7 +112,7 @@ struct TaskPool {
 
 impl TaskPool {
     #[inline]
-    fn shard_for(&self, addr: usize) -> &Mutex<HashMap<usize, Arc<TaskHandle>>> {
+    fn shard_for(&self, addr: usize) -> &HandleShard {
         let idx = ((addr >> 4) ^ (addr >> 13)) & (HANDLE_SHARDS - 1);
         &self.shards[idx]
     }
@@ -392,6 +394,10 @@ unsafe extern "C" fn task_payload_destroy(payload: *mut c_void) {
 
 /// Trace for a task: the owned environment, plus the owned managed
 /// result once complete (mirrors `task_payload_destroy`).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_task_trace(payload: *mut c_void, ctx: *mut c_void) {
     if payload.is_null() {
@@ -409,6 +415,10 @@ pub unsafe extern "C" fn lpp_task_trace(payload: *mut c_void, ctx: *mut c_void) 
 /// Create a task and submit it to the multi-threaded work-stealing pool.
 /// `code_ptr` and `environment` are both required; the environment reference
 /// is transferred (owned by the task).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_task_new(
     code_ptr: *mut c_void,
@@ -448,6 +458,10 @@ pub unsafe extern "C" fn lpp_task_new(
 /// Poll the task to completion on the multi-threaded work-stealing executor
 /// (stealing it inline if still queued, or cooperatively executing peer
 /// work while waiting for the assigned worker thread to finish).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_task_poll(raw_task: *mut c_void) -> i64 {
     if raw_task.is_null() {
@@ -482,6 +496,10 @@ pub unsafe extern "C" fn lpp_task_poll(raw_task: *mut c_void) -> i64 {
 /// Await the task: ensure it completes on the multi-threaded executor, then
 /// return its result. Each await of a managed result creates a fresh
 /// caller-owned reference (the task keeps its own).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_task_await(raw_task: *mut c_void) -> i64 {
     unsafe { lpp_task_poll(raw_task) };
@@ -494,18 +512,30 @@ pub unsafe extern "C" fn lpp_task_await(raw_task: *mut c_void) -> i64 {
 }
 
 /// Return the number of OS worker threads backing the async task pool.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_async_worker_count() -> i64 {
     task_pool().workers.len() as i64
 }
 
 /// Return the cumulative number of async tasks completed across all threads.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_async_tasks_completed() -> i64 {
     TASKS_COMPLETED.load(Ordering::Relaxed) as i64
 }
 
 /// Return the cumulative number of tasks stolen across worker deques.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_async_tasks_stolen() -> i64 {
     TASKS_STOLEN.load(Ordering::Relaxed) as i64
@@ -513,6 +543,10 @@ pub unsafe extern "C" fn lpp_async_tasks_stolen() -> i64 {
 
 /// Destroy the task: a single ARC reference release (the destructor handles
 /// the environment and managed result).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ task runtime ABI; any non-null task, closure code, environment, or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_task_destroy(raw_task: *mut c_void) {
     unsafe { lpp_arc_release(raw_task) };

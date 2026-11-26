@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) fn check_builtin(
+pub(super) fn check_builtin(
     lower: &mut ScanLower<'_>,
     builtin: BuiltinId,
     args: &[Operand],

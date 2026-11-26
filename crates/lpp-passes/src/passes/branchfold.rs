@@ -70,8 +70,8 @@ impl MirPass for BranchFoldPass {
 
 /// Borrow the function's single-def constants and its block ids with
 /// a single immutable borrow so the caller can mutate afterwards.
-fn function_shapes<'p>(
-    program: &'p MirProgram,
+fn function_shapes(
+    program: &MirProgram,
     function_id: MirFunctionId,
 ) -> Option<(
     std::collections::BTreeMap<lpp_mir::MirLocalId, Constant>,

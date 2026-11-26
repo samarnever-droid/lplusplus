@@ -225,18 +225,30 @@ impl<'a> FnCtx<'a> {
     }
 }
 
+pub(crate) struct EmitFunctionCtx<'a> {
+    pub(crate) program: &'a MirProgram,
+    pub(crate) types: &'a TypeInterner,
+    pub(crate) plan: &'a Plan,
+    pub(crate) string_ids: &'a HashMap<MirStringId, usize>,
+    pub(crate) pgo_fingerprint: Option<u64>,
+    pub(crate) names: &'a dyn NameResolver,
+}
+
 pub(crate) fn emit_function(
     out: &mut String,
-    program: &MirProgram,
-    types: &TypeInterner,
-    plan: &Plan,
-    string_ids: &HashMap<MirStringId, usize>,
+    ctx: &EmitFunctionCtx<'_>,
     mir_id: MirFunctionId,
     function: &MirFunction,
-    pgo_fingerprint: Option<u64>,
-    names: &dyn NameResolver,
     dbg: &mut super::debug::DebugMetadata<'_>,
 ) -> Result<(), CodegenError> {
+    let EmitFunctionCtx {
+        program,
+        types,
+        plan,
+        string_ids,
+        pgo_fingerprint,
+        names,
+    } = *ctx;
     let is_closure = matches!(function.kind, MirFunctionKind::Closure);
     let capture_locals: Vec<MirLocalId> = program
         .function_parameters(function)
@@ -417,7 +429,7 @@ pub(crate) fn emit_function(
         ctx.lower_terminator(&block.terminator)?;
     }
 
-    let _ = write!(out, "{}{}}}\n", ctx.prologue, ctx.body);
+    let _ = writeln!(out, "{}{}}}", ctx.prologue, ctx.body);
     Ok(())
 }
 

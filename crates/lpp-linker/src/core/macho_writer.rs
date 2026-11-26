@@ -30,7 +30,7 @@ fn macho_adhoc_codesig(code: &[u8], ident: &str, page_size: usize, exec_limit: u
     let n_pages = if code.is_empty() {
         0
     } else {
-        (code.len() + page_size - 1) / page_size
+        code.len().div_ceil(page_size)
     };
     let version = 0x0002_0400u32;
     let cd_fixed = 88usize; // CodeDirectory up through execSegFlags
@@ -131,11 +131,11 @@ pub fn write_macho_with_options_t(
         && opts.libraries.is_empty()
         && opts.needed.is_empty()
     {
-        return Err(format!(
+        return Err(
             "lpp-link: dynamic libSystem imports are required for ARM64 Mach-O \
  executables; pass -l System or link dynamically (macOS policy)"
-        )
-        .into());
+                .into(),
+        );
     }
 
     if opts.dynamic == DynamicMode::Static && !imports.is_empty() {
@@ -153,7 +153,7 @@ pub fn write_macho_with_options_t(
     }
     for (oi, o) in objects.iter().enumerate() {
         for rel in &o.relocations {
-            let macho_got = matches!(rel.raw_type, 3 | 4 | 5 | 6 | 7);
+            let macho_got = matches!(rel.raw_type, 3..=7);
             if macho_got {
                 let key = got_key(oi, &rel.target);
                 let i = got_keys.len();
@@ -275,15 +275,15 @@ pub fn write_macho_with_options_t(
     let mut sym_to_dylib_ord: HashMap<String, usize> = HashMap::new();
     for (dylib_idx, dylib_path) in dylibs.iter().enumerate() {
         let ord = dylib_idx + 1; // dyld ordinals are 1-based
-        if let Ok(bytes) = fs::read(dylib_path) {
-            if let Ok(file) = object::File::parse(&*bytes) {
-                for sym in file.exports().unwrap_or_default() {
-                    let raw = String::from_utf8_lossy(sym.name()).into_owned();
-                    // strip leading underscore (Mach-O convention) for internal lookup
-                    let clean = raw.strip_prefix('_').unwrap_or(&raw).to_string();
-                    sym_to_dylib_ord.entry(clean).or_insert(ord);
-                    sym_to_dylib_ord.entry(raw).or_insert(ord);
-                }
+        if let Ok(bytes) = fs::read(dylib_path)
+            && let Ok(file) = object::File::parse(&*bytes)
+        {
+            for sym in file.exports().unwrap_or_default() {
+                let raw = String::from_utf8_lossy(sym.name()).into_owned();
+                // strip leading underscore (Mach-O convention) for internal lookup
+                let clean = raw.strip_prefix('_').unwrap_or(&raw).to_string();
+                sym_to_dylib_ord.entry(clean).or_insert(ord);
+                sym_to_dylib_ord.entry(raw).or_insert(ord);
             }
         }
     }

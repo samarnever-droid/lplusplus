@@ -39,6 +39,10 @@ unsafe extern "C" fn tuple_destroy(payload: *mut c_void) {
 
 /// Trace for a tuple: report each managed child slot (the same walk
 /// as `tuple_destroy`, without releasing).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ tuple runtime ABI; any non-null tuple payload or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_tuple_trace(payload: *mut c_void, ctx: *mut c_void) {
     if payload.is_null() {
@@ -58,6 +62,10 @@ pub unsafe extern "C" fn lpp_tuple_trace(payload: *mut c_void, ctx: *mut c_void)
 
 /// Allocate a tuple of `size` bytes (>= the 16-byte prefix) with the given
 /// managed mask and packed offsets.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ tuple runtime ABI; any non-null tuple payload or trace context pointer must be valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_tuple_alloc(
     size: i64,

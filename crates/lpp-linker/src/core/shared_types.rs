@@ -147,11 +147,7 @@ impl Default for LinkOptions {
             entry: None,
             image_base: None,
             pie: false,
-            dynamic: if LPP_FREESTANDING {
-                DynamicMode::Auto
-            } else {
-                DynamicMode::Auto
-            },
+            dynamic: DynamicMode::Auto,
             subsystem: None,
             stack_reserve: 0x100000,
             stack_commit: 0x1000,

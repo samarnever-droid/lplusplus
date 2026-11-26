@@ -1,5 +1,3 @@
-use super::*;
-
 /// Escape a Rust string into an LLVM `c"..."` literal body (including the
 /// terminating NUL).
 pub(super) fn llvm_string(text: &str) -> String {

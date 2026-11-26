@@ -30,7 +30,7 @@ pub(crate) fn slice_kind_of(
 }
 
 /// The element type of a list operand: a `Copy` of a local of list type.
-pub(crate) fn list_element_of(
+pub(super) fn list_element_of(
     lower: &ScanLower<'_>,
     operand: &Operand,
 ) -> Result<TypeId, CodegenError> {
@@ -47,7 +47,7 @@ pub(crate) fn list_element_of(
     }
 }
 
-pub(crate) fn check_terminator(
+pub(super) fn check_terminator(
     lower: &mut ScanLower<'_>,
     terminator: &Terminator,
 ) -> Result<(), CodegenError> {
@@ -77,7 +77,7 @@ pub(crate) fn check_terminator(
     }
 }
 
-pub(crate) fn require_str(
+pub(super) fn require_str(
     lower: &mut ScanLower<'_>,
     operand: &Operand,
 ) -> Result<(), CodegenError> {
@@ -88,7 +88,7 @@ pub(crate) fn require_str(
     }
 }
 
-pub(crate) fn require_i64(
+pub(super) fn require_i64(
     lower: &mut ScanLower<'_>,
     operand: &Operand,
 ) -> Result<(), CodegenError> {
@@ -99,7 +99,7 @@ pub(crate) fn require_i64(
     }
 }
 
-pub(crate) fn require_bool(
+pub(super) fn require_bool(
     lower: &mut ScanLower<'_>,
     operand: &Operand,
 ) -> Result<(), CodegenError> {
@@ -110,7 +110,7 @@ pub(crate) fn require_bool(
     }
 }
 
-pub(crate) fn require_f64(
+pub(super) fn require_f64(
     lower: &mut ScanLower<'_>,
     operand: &Operand,
 ) -> Result<(), CodegenError> {

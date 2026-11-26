@@ -56,7 +56,7 @@ fn fits_i16(v: i64) -> bool {
     v >= i16::MIN as i64 && v <= i16::MAX as i64
 }
 fn fits_i26(v: i64) -> bool {
-    v >= -(1 << 25) && v < (1 << 25)
+    (-(1 << 25)..(1 << 25)).contains(&v)
 }
 fn fits_i32(v: i64) -> bool {
     v >= i32::MIN as i64 && v <= i32::MAX as i64
@@ -182,7 +182,7 @@ fn sha256(data: &[u8]) -> [u8; 32] {
         msg.push(0);
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
-    for chunk in msg.chunks_exact(64) {
+    for chunk in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([

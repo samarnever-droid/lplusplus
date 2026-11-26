@@ -1396,13 +1396,12 @@ fn compute_concurrency(
                                 }
                             }
                         }
-                        Rvalue::Await(Operand::Copy(task)) => {
+                        Rvalue::Await(Operand::Copy(task))
                             if concurrent_cells.contains(&(fn_id, task))
                                 && local_ty(target)
-                                    .is_some_and(|ty| is_tracked_concurrency_type(types, ty))
-                            {
-                                changed |= concurrent_cells.insert((fn_id, target));
-                            }
+                                    .is_some_and(|ty| is_tracked_concurrency_type(types, ty)) =>
+                        {
+                            changed |= concurrent_cells.insert((fn_id, target));
                         }
                         _ => {}
                     }

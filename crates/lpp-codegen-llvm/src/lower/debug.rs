@@ -102,10 +102,6 @@ impl<'a> DebugMetadata<'a> {
         this
     }
 
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
     fn alloc_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;

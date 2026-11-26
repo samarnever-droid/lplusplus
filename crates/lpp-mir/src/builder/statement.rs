@@ -289,7 +289,7 @@ impl FunctionBuilder<'_, '_> {
         // directly (a `SwitchEnum` target still points at `join`) or an arm body
         // completes without diverging. Otherwise every path returns/diverges and
         // leaving `join` current would be a spurious missing-return.
-        let mut join_reachable = targets.iter().any(|target| *target == join);
+        let mut join_reachable = targets.contains(&join);
 
         for (arm_id, arm_fact, block) in lowered_arms {
             let arm = self.core.package.match_arms[arm_id];
@@ -440,7 +440,7 @@ impl FunctionBuilder<'_, '_> {
                 Rvalue::Binary {
                     left: Operand::Copy(step_local),
                     operator: lpp_hir::BinaryOperator::Greater,
-                    right: zero_const.clone(),
+                    right: zero_const,
                 },
                 origin,
             )?;

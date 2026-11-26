@@ -28,35 +28,51 @@ unsafe fn flush_all() {
 }
 
 /// `print_int(value)` — `printf("%lld\n", value)`.
+///
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_print_int(value: i64) {
     unsafe {
-        printf(b"%lld\n\0".as_ptr().cast::<c_char>(), value);
+        printf(c"%lld\n".as_ptr(), value);
         flush_all();
     }
 }
 
 /// `print_float(value)` — `printf("%f\n", value)` (6 decimal places, NOT %g).
+///
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_print_float(value: f64) {
     unsafe {
-        printf(b"%f\n\0".as_ptr().cast::<c_char>(), value);
+        printf(c"%f\n".as_ptr(), value);
         flush_all();
     }
 }
 
 /// `print_bool(value)` — `printf("%d\n", value ? 1 : 0)`. The parameter is
 /// `i8` (L++ `Bool` lowers to i8).
+///
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_print_bool(value: i8) {
     unsafe {
-        printf(b"%d\n\0".as_ptr().cast::<c_char>(), i32::from(value != 0));
+        printf(c"%d\n".as_ptr(), i32::from(value != 0));
         flush_all();
     }
 }
 
 /// `print_str(ptr)` — `puts(ptr)` (writes the string plus a trailing
 /// newline). NULL is ignored.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_print_str(ptr: *const c_char) {
     if ptr.is_null() {
@@ -70,13 +86,17 @@ pub unsafe extern "C" fn lpp_print_str(ptr: *const c_char) {
 
 /// `write_str(ptr)` — writes the raw string with NO trailing newline
 /// (`fputs(ptr, stdout)`). NULL is ignored.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_str(ptr: *const c_char) {
     if ptr.is_null() {
         return;
     }
     unsafe {
-        printf(b"%s\0".as_ptr().cast::<c_char>(), ptr);
+        printf(c"%s".as_ptr(), ptr);
         flush_all();
     }
 }
@@ -84,6 +104,10 @@ pub unsafe extern "C" fn lpp_write_str(ptr: *const c_char) {
 /// `eprint_str(ptr)` — writes the string plus a trailing newline to stderr.
 /// Defined by the `c_shim` reference (absent from `lpp_runtime.c`); uses a
 /// direct fd-2 write to avoid the `stderr` `FILE *` static. NULL is ignored.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_eprint_str(ptr: *const c_char) {
     if ptr.is_null() {
@@ -101,6 +125,10 @@ pub unsafe extern "C" fn lpp_eprint_str(ptr: *const c_char) {
 /// harness) it returns the empty string, so an interactive loop reading past
 /// the end of input terminates instead of blocking. A trailing CR is stripped
 /// too, so CRLF input yields the same bytes as LF.
+///
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_input() -> *mut c_char {
     use std::io::Read;
@@ -158,15 +186,19 @@ fn path_from(bytes: &[u8]) -> std::path::PathBuf {
 /// A missing/empty parent is a no-op; errors are swallowed, exactly like the C
 /// reference, because the subsequent open reports the real failure.
 fn make_parent_dirs(path: &std::path::Path) {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = std::fs::create_dir_all(parent);
     }
 }
 
 /// `read_file(path) -> Str` — whole-file contents as an owning ARC string; the
 /// empty string on any error (missing/unreadable path).
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_read_file(path: *const c_char) -> *mut c_char {
     let bytes = unsafe { cstr_bytes(path) };
@@ -178,6 +210,10 @@ pub unsafe extern "C" fn lpp_read_file(path: *const c_char) -> *mut c_char {
 
 /// `write_file(path, data) -> Int` — truncating write; creates parent dirs.
 /// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_file(path: *const c_char, data: *const c_char) -> i64 {
     if path.is_null() || data.is_null() {
@@ -194,6 +230,10 @@ pub unsafe extern "C" fn lpp_write_file(path: *const c_char, data: *const c_char
 
 /// `append_file(path, data) -> Int` — create-or-append; creates parent dirs.
 /// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_append_file(path: *const c_char, data: *const c_char) -> i64 {
     use std::io::Write;
@@ -220,6 +260,10 @@ pub unsafe extern "C" fn lpp_append_file(path: *const c_char, data: *const c_cha
 }
 
 /// `delete_file(path) -> Int` — remove a regular file. 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_delete_file(path: *const c_char) -> i64 {
     match std::fs::remove_file(path_from(unsafe { cstr_bytes(path) })) {
@@ -229,12 +273,20 @@ pub unsafe extern "C" fn lpp_delete_file(path: *const c_char) -> i64 {
 }
 
 /// `file_exists(path) -> Int` — 1 if `path` is an existing regular file, else 0.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_exists(path: *const c_char) -> i64 {
     i64::from(path_from(unsafe { cstr_bytes(path) }).is_file())
 }
 
 /// `file_size(path) -> Int` — size in bytes of a regular file, or -1.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_size(path: *const c_char) -> i64 {
     match std::fs::metadata(path_from(unsafe { cstr_bytes(path) })) {
@@ -245,6 +297,10 @@ pub unsafe extern "C" fn lpp_file_size(path: *const c_char) -> i64 {
 
 /// `file_copy(src, dst) -> Int` — copy contents, creating `dst`'s parents.
 /// 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_copy(src: *const c_char, dst: *const c_char) -> i64 {
     if src.is_null() || dst.is_null() {
@@ -261,6 +317,10 @@ pub unsafe extern "C" fn lpp_file_copy(src: *const c_char, dst: *const c_char) -
 
 /// `file_move(src, dst) -> Int` — rename `src` to `dst` (parents created for
 /// `dst`), with a copy+unlink fallback across filesystems. 0 ok, -1 error.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_move(src: *const c_char, dst: *const c_char) -> i64 {
     if src.is_null() || dst.is_null() {
@@ -284,6 +344,10 @@ pub unsafe extern "C" fn lpp_file_move(src: *const c_char, dst: *const c_char) -
 
 /// `dir_create(path) -> Int` — create the directory and any missing ancestors
 /// (idempotent). 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_dir_create(path: *const c_char) -> i64 {
     match std::fs::create_dir_all(path_from(unsafe { cstr_bytes(path) })) {
@@ -293,6 +357,10 @@ pub unsafe extern "C" fn lpp_dir_create(path: *const c_char) -> i64 {
 }
 
 /// `dir_remove(path) -> Int` — remove a directory and its contents. 0 ok, -1 err.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_dir_remove(path: *const c_char) -> i64 {
     match std::fs::remove_dir_all(path_from(unsafe { cstr_bytes(path) })) {
@@ -303,6 +371,10 @@ pub unsafe extern "C" fn lpp_dir_remove(path: *const c_char) -> i64 {
 
 /// `path_exists(path) -> Int` — 1 if anything (file or directory) exists at
 /// `path`, else 0.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_path_exists(path: *const c_char) -> i64 {
     i64::from(path_from(unsafe { cstr_bytes(path) }).exists())
@@ -311,6 +383,10 @@ pub unsafe extern "C" fn lpp_path_exists(path: *const c_char) -> i64 {
 /// `command_output(cmd) -> Str` — run `cmd` through the platform shell and
 /// return its captured stdout as an owning ARC string (the empty string on
 /// spawn failure or a NULL command), mirroring v1's `popen`/`_popen`.
+///
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_command_output(cmd: *const c_char) -> *mut c_char {
     let bytes = unsafe { cstr_bytes(cmd) };
@@ -334,6 +410,9 @@ pub unsafe extern "C" fn lpp_command_output(cmd: *const c_char) -> *mut c_char {
     }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_command_exec(cmd: *const c_char) -> i64 {
     let bytes = unsafe { cstr_bytes(cmd) };
@@ -357,6 +436,9 @@ pub unsafe extern "C" fn lpp_command_exec(cmd: *const c_char) -> i64 {
     }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_env_get(name: *const c_char) -> *mut c_char {
     if name.is_null() {
@@ -369,6 +451,9 @@ pub unsafe extern "C" fn lpp_env_get(name: *const c_char) -> *mut c_char {
     }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_env_set(name: *const c_char, value: *const c_char) -> i64 {
     if name.is_null() {
@@ -386,6 +471,9 @@ pub unsafe extern "C" fn lpp_env_set(name: *const c_char, value: *const c_char) 
     0
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_dir_list(path: *const c_char) -> *mut c_void {
     let list = unsafe { crate::list::lpp_list_new_arc() };
@@ -404,6 +492,9 @@ pub unsafe extern "C" fn lpp_dir_list(path: *const c_char) -> *mut c_void {
     list
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_path_join(base: *const c_char, child: *const c_char) -> *mut c_char {
     let b = unsafe { cstr_bytes(base) };
@@ -432,43 +523,58 @@ pub extern "C" fn lpp_exit(code: i64) {
     std::process::exit(code as i32);
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_int(value: i64) {
     unsafe {
-        printf(b"%lld\0".as_ptr().cast::<c_char>(), value);
+        printf(c"%lld".as_ptr(), value);
         flush_all();
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_uint(value: i64) {
     unsafe {
-        printf(b"%llu\0".as_ptr().cast::<c_char>(), value as u64);
+        printf(c"%llu".as_ptr(), value as u64);
         flush_all();
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_float(value: f64) {
     unsafe {
-        printf(b"%g\0".as_ptr().cast::<c_char>(), value);
+        printf(c"%g".as_ptr(), value);
         flush_all();
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_bool(value: i8) {
     let s = if value != 0 {
-        b"true\0".as_ptr()
+        c"true".as_ptr()
     } else {
-        b"false\0".as_ptr()
+        c"false".as_ptr()
     };
     unsafe {
-        printf(b"%s\0".as_ptr().cast::<c_char>(), s.cast::<c_char>());
+        printf(c"%s".as_ptr(), s);
         flush_all();
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_char(value: i64) {
     let b = (value & 0xFF) as u8;
@@ -478,6 +584,9 @@ pub unsafe extern "C" fn lpp_write_char(value: i64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_write_nl() {
     unsafe {
@@ -486,6 +595,9 @@ pub unsafe extern "C" fn lpp_write_nl() {
     }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_ewrite_str(ptr: *const c_char) {
     if ptr.is_null() {
@@ -497,6 +609,9 @@ pub unsafe extern "C" fn lpp_ewrite_str(ptr: *const c_char) {
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_flush() {
     unsafe { flush_all() };
@@ -509,6 +624,9 @@ pub extern "C" fn lpp_args_count() -> i64 {
     std::env::args_os().count() as i64
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_args_get(index: i64) -> *mut c_char {
     if index < 0 {
@@ -523,6 +641,9 @@ pub unsafe extern "C" fn lpp_args_get(index: i64) -> *mut c_char {
     }
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_args() -> *mut c_void {
     let list = unsafe { crate::list::lpp_list_new_arc() };
@@ -537,6 +658,9 @@ pub unsafe extern "C" fn lpp_args() -> *mut c_void {
     list
 }
 
+/// # Safety
+///
+/// Caller must invoke this entry point according to the L++ C FFI ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_cwd() -> *mut c_char {
     match std::env::current_dir() {
@@ -548,6 +672,9 @@ pub unsafe extern "C" fn lpp_cwd() -> *mut c_char {
     }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_chdir(path: *const c_char) -> i64 {
     if path.is_null() {
@@ -560,6 +687,9 @@ pub unsafe extern "C" fn lpp_chdir(path: *const c_char) -> i64 {
     }
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_is_dir(path: *const c_char) -> i64 {
     if path.is_null() {
@@ -568,6 +698,9 @@ pub unsafe extern "C" fn lpp_is_dir(path: *const c_char) -> i64 {
     i64::from(path_from(unsafe { cstr_bytes(path) }).is_dir())
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_is_file(path: *const c_char) -> i64 {
     if path.is_null() {
@@ -591,6 +724,9 @@ fn fd_table() -> &'static Mutex<BTreeMap<i64, std::fs::File>> {
     TABLE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_open(path: *const c_char, flags: i64) -> i64 {
     if path.is_null() {
@@ -645,6 +781,9 @@ pub extern "C" fn lpp_file_close(fd: i64) {
     }
 }
 
+/// # Safety
+///
+/// Any raw buffer address must refer to a valid allocation covering the requested offset and byte length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_pread(
     fd: i64,
@@ -688,6 +827,9 @@ pub unsafe extern "C" fn lpp_file_pread(
     total as i64
 }
 
+/// # Safety
+///
+/// Any raw buffer address must refer to a valid allocation covering the requested offset and byte length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_file_pwrite(
     fd: i64,

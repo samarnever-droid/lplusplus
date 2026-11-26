@@ -43,9 +43,9 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use lpp_codegen_api::{CodegenError, CodegenErrorKind};
 use lpp_mir::{
-    BasicBlockId, BinaryOperator, Constant, InstructionKind, KernelIntrinsic, MirAggregateId,
-    MirExternalFunctionId, MirFunction, MirFunctionId, MirFunctionKind, MirLocalId, MirProgram,
-    MirStringId, Operand, PlaceProjection, Rvalue, Terminator, UnaryOperator,
+    BasicBlockId, BinaryOperator, Constant, InstructionKind, MirAggregateId, MirExternalFunctionId,
+    MirFunction, MirFunctionId, MirFunctionKind, MirLocalId, MirProgram, MirStringId, Operand,
+    PlaceProjection, Rvalue, Terminator, UnaryOperator,
 };
 use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
 

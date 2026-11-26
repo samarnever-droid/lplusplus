@@ -9,7 +9,7 @@
 //!
 //! Slices:
 //! - **6B.1:** layout constants + the ARC core (alloc, retain/release atomic
-//!   + local fast path, weak generations, immortal empty string, closure
+//!   and local fast path, weak generations, immortal empty string, closure
 //!   destroy).
 //! - **6B.2:** the panic path, `List[T]` (value + ARC-owning,
 //!   push/get/set for int/float/bool/arc, len/pop/free/reserve/capacity/
@@ -29,8 +29,6 @@
 //!
 //! The crate builds as `rlib` (in-process tests), `staticlib` and
 //! `cdylib` (linking for generated objects and the census gate).
-
-#![allow(clippy::style, clippy::complexity, clippy::perf)]
 
 pub mod layout;
 

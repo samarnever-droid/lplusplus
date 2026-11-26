@@ -4,9 +4,9 @@ pub(super) fn emit(
     fb: &mut FB,
     h: H,
     env: &Env<'_>,
-    fd_helper_idx: u32,
-    fd_write_import_idx: u32,
-    fd_read_import_idx: u32,
+    _fd_helper_idx: u32,
+    _fd_write_import_idx: u32,
+    _fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
 ) -> Result<(), CodegenError> {
     let idx = |h: H| {

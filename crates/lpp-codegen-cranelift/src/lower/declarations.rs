@@ -594,11 +594,13 @@ impl<'m> Lowering<'m> {
             self.lower_function(
                 program,
                 types,
-                mir_id,
-                function,
-                export_name,
-                source_name,
-                debug_info,
+                functions::FunctionLowerSpec {
+                    mir_id,
+                    function,
+                    export_name,
+                    source_name,
+                    debug_info,
+                },
             )?;
         }
         for &function_id in &plan.closure_dtors {

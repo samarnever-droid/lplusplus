@@ -48,6 +48,10 @@ unsafe fn checked_base(view: *const LppSlice) -> *mut c_void {
 /// Build a slice view over `base` (a string or a list) into caller-provided
 /// `storage`. Range-checked against the source length; the source must be
 /// ARC-managed (nonzero weak generation).
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_slice_init(
     storage: *mut c_void,
@@ -85,6 +89,10 @@ pub unsafe extern "C" fn lpp_slice_init(
 }
 
 /// The slice length (validates the source is still live first).
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_slice_len(raw_view: *mut c_void) -> i64 {
     let view = raw_view as *const LppSlice;
@@ -93,6 +101,10 @@ pub unsafe extern "C" fn lpp_slice_len(raw_view: *mut c_void) -> i64 {
 }
 
 /// Read the raw `i64` at `index` from a numeric (`kind == 1`) slice.
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_slice_get(raw_view: *mut c_void, index: i64) -> i64 {
     let view = raw_view as *const LppSlice;
@@ -111,12 +123,20 @@ pub unsafe extern "C" fn lpp_slice_get(raw_view: *mut c_void, index: i64) -> i64
 }
 
 /// Read a float at `index` (bit-unpacked).
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_slice_get_float(raw_view: *mut c_void, index: i64) -> f64 {
     f64::from_bits(unsafe { lpp_slice_get(raw_view, index) } as u64)
 }
 
 /// Read a bool at `index` (nonzero = true).
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_slice_get_bool(raw_view: *mut c_void, index: i64) -> i8 {
     i8::from(unsafe { lpp_slice_get(raw_view, index) } != 0)
@@ -124,6 +144,10 @@ pub unsafe extern "C" fn lpp_slice_get_bool(raw_view: *mut c_void, index: i64) -
 
 /// Read one byte at `index` from a string (`kind == 0`) slice as a fresh
 /// 1-character ARC string. Mirrors C `lpp_str_slice_get`.
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_slice_get(raw_view: *mut c_void, index: i64) -> *mut c_char {
     let view = raw_view as *const LppSlice;
@@ -151,6 +175,10 @@ pub unsafe extern "C" fn lpp_str_slice_get(raw_view: *mut c_void, index: i64) ->
 
 /// Copy a string (`kind == 0`) slice into a fresh NUL-terminated ARC string.
 /// Mirrors C `lpp_str_slice_to_str`.
+///
+/// # Safety
+///
+/// Any non-null slice storage, view, or base pointer must be properly aligned and valid for the L++ slice ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_str_slice_to_str(raw_view: *mut c_void) -> *mut c_char {
     let view = raw_view as *const LppSlice;

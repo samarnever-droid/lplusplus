@@ -129,13 +129,12 @@ pub fn outdated_render(
 ) -> Result<String, String> {
     let (_ws, lock) = load_lock(dir)?;
 
-    if let Some(f) = filter {
-        if !locked_registry_names(&lock)
+    if let Some(f) = filter
+        && !locked_registry_names(&lock)
             .into_iter()
             .any(|p| p.name == f)
-        {
-            return Err(lpp_pm::PmError::NotInLockFile(f.to_string()).to_string());
-        }
+    {
+        return Err(lpp_pm::PmError::NotInLockFile(f.to_string()).to_string());
     }
     if locked_registry_names(&lock).is_empty() {
         return Ok("nothing to check: no registry packages in Keel.lock\n".to_string());
@@ -241,7 +240,9 @@ pub fn verify_render(reg: &Registry, dir: &Path) -> Result<(String, bool), Strin
     let mut rows: Vec<(String, String, String, &str)> = Vec::new();
     let mut failed = 0usize;
     for p in &registry_pkgs {
-        let checksum = p.checksum.as_deref().unwrap();
+        let Some(checksum) = p.checksum.as_deref() else {
+            continue;
+        };
         let status = verify_one(reg, &p.name, &p.version, checksum);
         if status != "ok" {
             failed += 1;
@@ -312,7 +313,9 @@ fn dfs_chains(
     target: &str,
     out: &mut Vec<Vec<String>>,
 ) {
-    let last = path.last().unwrap().clone();
+    let Some(last) = path.last().cloned() else {
+        return;
+    };
     if last == target {
         out.push(path.clone());
         return;

@@ -85,7 +85,7 @@ pub(crate) fn pre_scan(
                 .as_ref()
                 .and_then(|symbol| names.resolve(symbol.raw()))
             {
-                Some(name) if name == "main" => {
+                Some("main") => {
                     export_names.insert(mir_id, "lpp_main".to_owned());
                 }
                 Some(name) => {
@@ -114,14 +114,14 @@ pub(crate) fn pre_scan(
         .iter()
         .find(|(_, name)| name.as_str() == "lpp_main")
         .map(|(id, _)| *id);
-    if let (Some(main_id), Some(main_fn)) = (main_id, main_id.and_then(|id| program.function(id))) {
-        if matches!(main_fn.kind, MirFunctionKind::Async) {
-            task_thunks.push(main_id);
-            imports.insert(IMP_TUPLE_ALLOC);
-            imports.insert(IMP_TASK_NEW);
-            imports.insert(IMP_TASK_AWAIT);
-            imports.insert(IMP_TASK_DESTROY);
-        }
+    if let (Some(main_id), Some(main_fn)) = (main_id, main_id.and_then(|id| program.function(id)))
+        && matches!(main_fn.kind, MirFunctionKind::Async)
+    {
+        task_thunks.push(main_id);
+        imports.insert(IMP_TUPLE_ALLOC);
+        imports.insert(IMP_TASK_NEW);
+        imports.insert(IMP_TASK_AWAIT);
+        imports.insert(IMP_TASK_DESTROY);
     }
 
     // The generated `main` wrapper runs one final collection so a
@@ -519,6 +519,13 @@ fn check_function_shape(
         scan.imports.insert(IMP_ARC_RETAIN);
     }
 
+    let ctx = PreflightCtx {
+        program,
+        types,
+        mir_id,
+        aggregates,
+        layouts,
+    };
     for &block in program.function_blocks(function) {
         let basic = program.block(block).expect("validated MIR retains blocks");
         for &instruction in program.block_instructions(basic) {
@@ -527,14 +534,10 @@ fn check_function_shape(
                 .expect("validated MIR retains instructions");
             match &instr.kind {
                 InstructionKind::Store { place, value } => {
-                    check_store_shape(
-                        program, types, *place, value, mir_id, aggregates, layouts, scan,
-                    )?;
+                    check_store_shape(&ctx, *place, value, scan)?;
                 }
                 InstructionKind::Assign { target, value } => {
-                    check_assign_shape(
-                        program, types, *target, value, function, mir_id, aggregates, layouts, scan,
-                    )?;
+                    check_assign_shape(&ctx, *target, value, scan)?;
                 }
             }
         }
@@ -610,16 +613,27 @@ fn check_binary(
     }
 }
 
+pub(super) struct PreflightCtx<'a> {
+    pub(super) program: &'a MirProgram,
+    pub(super) types: &'a TypeInterner,
+    pub(super) mir_id: MirFunctionId,
+    pub(super) aggregates: &'a AggregateIndex,
+    pub(super) layouts: &'a HashMap<MirAggregateId, AggregateLayout>,
+}
+
 fn check_store_shape(
-    program: &MirProgram,
-    types: &TypeInterner,
+    ctx: &PreflightCtx<'_>,
     place: lpp_mir::MirPlaceId,
     value: &Operand,
-    mir_id: MirFunctionId,
-    aggregates: &AggregateIndex,
-    layouts: &HashMap<MirAggregateId, AggregateLayout>,
     scan: &mut ScanState,
 ) -> Result<(), CodegenError> {
+    let PreflightCtx {
+        program,
+        types,
+        mir_id,
+        aggregates,
+        layouts,
+    } = *ctx;
     let check_operand = |operand: &Operand| operand_type(program, types, operand, mir_id);
     let resolution = resolve_place(program, types, place, aggregates, layouts, mir_id, true)?;
     check_operand(value)?;

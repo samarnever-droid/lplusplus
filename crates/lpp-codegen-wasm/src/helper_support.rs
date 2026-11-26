@@ -80,7 +80,7 @@ pub(super) fn box_result_word(fb: &mut FB, types: &TypeInterner, ty: TypeId) {
 pub(super) fn lower_task_thunk(
     env: &Env<'_>,
     function_id: MirFunctionId,
-) -> Result<(Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
+) -> Result<LoweredFunc, CodegenError> {
     let function = env.program.function(function_id).unwrap();
     let user_params: Vec<MirLocalId> = env
         .program
@@ -139,7 +139,7 @@ pub(super) fn lower_task_thunk(
 pub(super) fn lower_closure_thunk(
     env: &Env<'_>,
     function_id: MirFunctionId,
-) -> Result<(Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
+) -> Result<LoweredFunc, CodegenError> {
     let function = env.program.function(function_id).unwrap();
     let call_type = *env
         .closure_call_type
@@ -170,7 +170,7 @@ pub(super) fn lower_helper(
     fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
     import_index: &BTreeMap<&str, u32>,
-) -> Result<(Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
+) -> Result<LoweredFunc, CodegenError> {
     let mut fb = match h {
         H::FdWrite | H::FdRead => FB::new(2),
         H::Input => FB::new(0),
@@ -361,11 +361,13 @@ pub(super) fn lower_helper(
         &mut fb,
         h,
         env,
-        fd_helper_idx,
-        fd_write_import_idx,
-        fd_read_import_idx,
-        proc_exit_import_idx,
-        import_index,
+        &helper_body::HelperImports {
+            fd_helper_idx,
+            fd_write_import_idx,
+            fd_read_import_idx,
+            proc_exit_import_idx,
+            import_index,
+        },
     )?;
     Ok((params, results, fb.extras, fb.body))
 }
@@ -590,7 +592,7 @@ pub(super) fn list_push_body(fb: &mut FB, idx: impl Fn(H) -> u32, is_f64: bool, 
 pub(super) fn lower_destructor(
     env: &Env<'_>,
     aggregate: MirAggregateId,
-) -> Result<(String, Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
+) -> Result<NamedLoweredFunc, CodegenError> {
     let layout = env
         .layouts
         .get(&aggregate)
@@ -647,9 +649,7 @@ pub(super) fn lower_destructor(
     Ok((name, vec![Val::I32], vec![], fb.extras, fb.body))
 }
 
-pub(super) fn lower_list_destructor(
-    env: &Env<'_>,
-) -> Result<(String, Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
+pub(super) fn lower_list_destructor(env: &Env<'_>) -> Result<NamedLoweredFunc, CodegenError> {
     let release_idx = *env
         .helper_index
         .get(&H::Release)

@@ -33,12 +33,11 @@ impl Interpreter<'_> {
         frame: &mut Frame,
     ) -> Result<RuntimeValue, InterpreterError> {
         let value = self.eval_operand(function, block, origin, operand, frame)?;
-        if self.arc.is_some() {
-            if let Operand::Copy(local) = operand {
-                if owns_heap_refs(&value) {
-                    frame.take(local);
-                }
-            }
+        if self.arc.is_some()
+            && let Operand::Copy(local) = operand
+            && owns_heap_refs(&value)
+        {
+            frame.take(local);
         }
         Ok(value)
     }
@@ -57,11 +56,10 @@ impl Interpreter<'_> {
             .name
             .strip_prefix("lpp_")
             .unwrap_or(builtin.descriptor().name);
-        match (name, position) {
-            ("list_push", 1) | ("list_set", 2) => true,
-            ("print", 0) | ("write_str", 0) => true,
-            _ => false,
-        }
+        matches!(
+            (name, position),
+            ("list_push", 1) | ("list_set", 2) | ("print", 0) | ("write_str", 0)
+        )
     }
 
     pub(super) fn load_place(
@@ -109,10 +107,10 @@ impl Interpreter<'_> {
         if projections.is_empty() {
             // Cell death on reassignment: the old value's reference is
             // dropped before the new one lands.
-            if self.arc.is_some() {
-                if let Some(old) = frame.get(place.root).cloned() {
-                    self.drop_reference(&old, Some(function), Some(block), Some(origin))?;
-                }
+            if self.arc.is_some()
+                && let Some(old) = frame.get(place.root).cloned()
+            {
+                self.drop_reference(&old, Some(function), Some(block), Some(origin))?;
             }
             frame.set(place.root, value);
             return Ok(());

@@ -353,7 +353,7 @@ impl Interpreter<'_> {
             ))),
             "shr_u" => {
                 let (left, shift) = (int_at(0)?, int_at(1)?);
-                Ok(RuntimeValue::Int(if shift < 0 || shift >= 64 {
+                Ok(RuntimeValue::Int(if !(0..64).contains(&shift) {
                     0
                 } else {
                     ((left as u64) >> shift) as i64
@@ -361,7 +361,7 @@ impl Interpreter<'_> {
             }
             "shl_u" => {
                 let (left, shift) = (int_at(0)?, int_at(1)?);
-                Ok(RuntimeValue::Int(if shift < 0 || shift >= 64 {
+                Ok(RuntimeValue::Int(if !(0..64).contains(&shift) {
                     0
                 } else {
                     ((left as u64) << shift) as i64

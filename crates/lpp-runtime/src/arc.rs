@@ -100,7 +100,7 @@ pub(crate) fn is_valid_arc_ptr(ptr: *const c_void) -> bool {
         return false;
     }
     let addr = ptr as usize;
-    if addr % 8 != 0 || addr < MIN_VALID_ADDR {
+    if !addr.is_multiple_of(8) || addr < MIN_VALID_ADDR {
         return false;
     }
     let magic = unsafe { magic_cell(ptr).read_volatile() };
@@ -114,6 +114,10 @@ pub(crate) fn is_valid_arc_ptr(ptr: *const c_void) -> bool {
 /// total 24-byte prefix for destructor-bearing objects. No-destructor objects
 /// (including ordinary strings) use only 16 bytes. The returned payload stays
 /// a plain pointer, and all ARC entry points use the common header.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_alloc_with_destructor(
     size: i64,
@@ -157,12 +161,20 @@ pub unsafe extern "C" fn lpp_arc_alloc_with_destructor(
 }
 
 /// Backwards-compatible allocation with no destructor.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_alloc(size: i64) -> *mut c_void {
     unsafe { lpp_arc_alloc_with_destructor(size, None) }
 }
 
 /// Increment the refcount. No-op for NULL, foreign, or immortal pointers.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_retain(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
@@ -173,6 +185,10 @@ pub unsafe extern "C" fn lpp_arc_retain(ptr: *mut c_void) {
 
 /// Decrement the refcount. Frees (generation bump, magic clear, destructor,
 /// then deallocation) when it reaches zero.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_release(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
@@ -217,6 +233,10 @@ unsafe fn drop_arc(ptr: *mut c_void) {
 /// Thread-local ARC fast path: identical semantics to [`lpp_arc_retain`]
 /// with relaxed ordering, emitted by the compiler for programs proven
 /// single-threaded (no `spawn`).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_retain_local(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
@@ -226,6 +246,10 @@ pub unsafe extern "C" fn lpp_arc_retain_local(ptr: *mut c_void) {
 }
 
 /// Thread-local release: relaxed ordering, same free contract.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_release_local(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
@@ -247,6 +271,10 @@ pub unsafe extern "C" fn lpp_arc_release_local(ptr: *mut c_void) {
 
 /// The current generation of a live object (for weak handles). Immortal
 /// objects report the sentinel itself; invalid pointers report 0.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_weak_generation(ptr: *mut c_void) -> i64 {
     if !is_valid_arc_ptr(ptr) {
@@ -260,6 +288,10 @@ pub unsafe extern "C" fn lpp_weak_generation(ptr: *mut c_void) -> i64 {
 
 /// Dereference a weak handle: the pointer if the target is still the same
 /// live object, else 0.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_weak_get(raw: i64, expected_generation: i64) -> i64 {
     let ptr = raw as *mut c_void;
@@ -293,6 +325,10 @@ pub static lpp__empty_str_blob: EmptyStrBlob =
     EmptyStrBlob([ARC_MAGIC, ARC_IMMORTAL, 0, 0, 0, 0, 0, 0]);
 
 /// Pointer to the (empty) payload of the immortal empty-string blob.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_empty_str() -> *mut c_void {
     let base = lpp__empty_str_blob.0.as_ptr() as *mut u8;
@@ -302,6 +338,10 @@ pub unsafe extern "C" fn lpp_empty_str() -> *mut c_void {
 /// An ARC-managed closure payload is two pointer-sized words:
 /// `[code pointer, environment pointer]`. The code pointer is non-owning;
 /// the environment is an owned ARC reference released here.
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_closure_destroy(closure: *mut c_void) {
     if closure.is_null() {
@@ -315,6 +355,10 @@ pub unsafe extern "C" fn lpp_closure_destroy(closure: *mut c_void) {
 
 /// Trace for a closure capsule: the environment pointer is its one
 /// owned ARC child (mirrors `lpp_closure_destroy`).
+///
+/// # Safety
+///
+/// Caller must uphold the L++ ARC ABI; any non-null pointer must refer to a live ARC payload allocated by this runtime (or an immortal sentinel) and any destructor callback must be valid for the payload.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_closure_trace(closure: *mut c_void, ctx: *mut c_void) {
     if closure.is_null() {

@@ -12,12 +12,15 @@ pub(super) fn emit(
     fb: &mut FB,
     h: H,
     env: &Env<'_>,
-    fd_helper_idx: u32,
-    fd_write_import_idx: u32,
-    fd_read_import_idx: u32,
-    proc_exit_import_idx: u32,
-    import_index: &BTreeMap<&str, u32>,
+    imports: &super::HelperImports<'_>,
 ) -> Result<(), CodegenError> {
+    let super::HelperImports {
+        fd_helper_idx,
+        fd_write_import_idx,
+        fd_read_import_idx,
+        import_index,
+        ..
+    } = *imports;
     let idx = |h: H| {
         *env.helper_index
             .get(&h)

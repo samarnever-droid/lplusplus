@@ -1,0 +1,8 @@
+[package]
+name = "compresslpp"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pure L++ compression toolkit (LZ77/DEFLATE/RLE)"
+
+[dependencies]

@@ -353,13 +353,15 @@ impl FunctionBuilder<'_, '_> {
                     .map(|local| Operand::Copy(*local))
                     .collect();
                 let function = self.core.lower_closure_function(
-                    expression_id,
-                    parameters,
-                    body,
-                    self.source,
-                    self.substitution.clone(),
-                    capture_locals,
-                    ty,
+                    super::super::build_functions::ClosureLowerSpec {
+                        expression: expression_id,
+                        parameters,
+                        body,
+                        enclosing_source: self.source,
+                        substitution: self.substitution.clone(),
+                        capture_locals,
+                        function_type: ty,
+                    },
                 )?;
                 let captures = self.store_operands(&capture_operands, expression.origin)?;
                 self.assign_temporary(

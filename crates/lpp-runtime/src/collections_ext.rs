@@ -102,6 +102,9 @@ pub extern "C" fn lpp_set_remove(handle: i64, value: i64) -> i8 {
         .is_some_and(|set| set.remove(&SetKey::Int(value))) as i8
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_set_add_str(handle: i64, key: *const c_char) -> i8 {
     let Some(bytes) = (unsafe { read_c_bytes(key) }) else {
@@ -113,6 +116,9 @@ pub unsafe extern "C" fn lpp_set_add_str(handle: i64, key: *const c_char) -> i8 
         .is_some_and(|set| set.insert(SetKey::Bytes(bytes))) as i8
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_set_has_str(handle: i64, key: *const c_char) -> i8 {
     let Some(bytes) = (unsafe { read_c_bytes(key) }) else {
@@ -124,6 +130,9 @@ pub unsafe extern "C" fn lpp_set_has_str(handle: i64, key: *const c_char) -> i8 
         .is_some_and(|set| set.contains(&SetKey::Bytes(bytes))) as i8
 }
 
+/// # Safety
+///
+/// Any non-null C string pointer argument must be a valid, NUL-terminated string for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_set_remove_str(handle: i64, key: *const c_char) -> i8 {
     let Some(bytes) = (unsafe { read_c_bytes(key) }) else {

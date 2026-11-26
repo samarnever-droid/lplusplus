@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 use lpp_codegen_api::{CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target};
-use lpp_mir::{MirFunction, MirFunctionId, MirLocalId, MirLocalKind, MirProgram, MirStringId};
+use lpp_mir::{MirFunction, MirFunctionId, MirLocalId, MirLocalKind, MirProgram};
 use lpp_types::{PrimitiveType, TypeId, TypeInterner, TypeKind};
 
 mod debug;
@@ -332,19 +332,16 @@ pub(crate) fn emit_llvm_ir_with_options(
         options.opt_level,
     );
 
+    let emit_ctx = function::EmitFunctionCtx {
+        program,
+        types,
+        plan: &plan,
+        string_ids: &string_ids,
+        pgo_fingerprint: options.pgo_fingerprint,
+        names: options.names,
+    };
     for (mir_id, function) in program.functions() {
-        function::emit_function(
-            &mut out,
-            program,
-            types,
-            &plan,
-            &string_ids,
-            mir_id,
-            function,
-            options.pgo_fingerprint,
-            options.names,
-            &mut dbg,
-        )?;
+        function::emit_function(&mut out, &emit_ctx, mir_id, function, &mut dbg)?;
     }
 
     managed::emit_destructors_and_thunks(&mut out, program, types, &plan, options.pgo_fingerprint)?;

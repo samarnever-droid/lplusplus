@@ -145,10 +145,11 @@ fn load_objects(
     search_dirs.push(PathBuf::from("/lib"));
     for lib in &opts.libraries {
         let p = PathBuf::from(lib);
-        if let Some(parent) = p.parent() {
-            if !parent.as_os_str().is_empty() && !search_dirs.contains(&parent.to_path_buf()) {
-                search_dirs.push(parent.to_path_buf());
-            }
+        if let Some(parent) = p.parent()
+            && !parent.as_os_str().is_empty()
+            && !search_dirs.contains(&parent.to_path_buf())
+        {
+            search_dirs.push(parent.to_path_buf());
         }
     }
 
@@ -164,12 +165,11 @@ fn load_objects(
     for lib in &opts.libraries {
         let path = PathBuf::from(lib);
         if path.exists() {
-            if let Ok(bytes) = fs::read(&path) {
-                if is_archive_bytes(&bytes) {
-                    if let Ok(members) = parse_archive_members(&path) {
-                        archives.push(archive_from_members(&path, members));
-                    }
-                }
+            if let Ok(bytes) = fs::read(&path)
+                && is_archive_bytes(&bytes)
+                && let Ok(members) = parse_archive_members(&path)
+            {
+                archives.push(archive_from_members(&path, members));
             }
             continue;
         }
@@ -193,12 +193,11 @@ fn load_objects(
             for cand in &candidates {
                 let cp = dir.join(cand);
                 if cp.exists() {
-                    if let Ok(bytes) = fs::read(&cp) {
-                        if is_archive_bytes(&bytes) {
-                            if let Ok(members) = parse_archive_members(&cp) {
-                                archives.push(archive_from_members(&cp, members));
-                            }
-                        }
+                    if let Ok(bytes) = fs::read(&cp)
+                        && is_archive_bytes(&bytes)
+                        && let Ok(members) = parse_archive_members(&cp)
+                    {
+                        archives.push(archive_from_members(&cp, members));
                     }
                     found = true;
                     break;
@@ -233,14 +232,14 @@ fn load_objects(
         let mut seeded = false;
         for ar in archives.iter_mut() {
             for e in entries {
-                if let Some(&idx) = ar.index.get(e) {
-                    if !ar.pulled[idx] {
-                        ar.pulled[idx] = true;
-                        let (mname, img) = &ar.members[idx];
-                        objects.push(parse_object_clone(img, &ar.path.join(mname)));
-                        seeded = true;
-                        break;
-                    }
+                if let Some(&idx) = ar.index.get(e)
+                    && !ar.pulled[idx]
+                {
+                    ar.pulled[idx] = true;
+                    let (mname, img) = &ar.members[idx];
+                    objects.push(parse_object_clone(img, &ar.path.join(mname)));
+                    seeded = true;
+                    break;
                 }
             }
             if seeded {

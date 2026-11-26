@@ -3,7 +3,6 @@
 //! Keel is separate from the `lpp` compiler (the rustc-analog): it manages
 //! projects/workspaces, dependencies, and the global cache, and drives `lpp`
 //! to build. See `docs/rewrite/KEEL.md`.
-#![allow(clippy::all, warnings)]
 
 pub mod cli;
 pub mod commands;
@@ -15,10 +14,10 @@ use clap::Parser;
 /// The global, cargo-style cache directory (XDG-aware): `$XDG_CACHE_HOME/keel`
 /// or `~/.cache/keel`.
 pub fn cache_dir() -> std::path::PathBuf {
-    if let Ok(x) = std::env::var("XDG_CACHE_HOME") {
-        if !x.trim().is_empty() {
-            return std::path::PathBuf::from(x).join("keel");
-        }
+    if let Ok(x) = std::env::var("XDG_CACHE_HOME")
+        && !x.trim().is_empty()
+    {
+        return std::path::PathBuf::from(x).join("keel");
     }
     #[cfg(windows)]
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
@@ -79,37 +78,11 @@ pub fn run() -> ExitCode {
 /// The canonical git-backed L++ package registry (`samarnever-droid/llppregistry`).
 pub const DEFAULT_REGISTRY_URL: &str = "https://github.com/samarnever-droid/llppregistry.git";
 
-/// Resolve an explicitly configured registry git URL: `--registry` flag, else `KEEL_REGISTRY`.
-fn registry_remote(cli: &cli::Cli) -> Result<String, String> {
-    if let Some(r) = &cli.registry {
-        let trimmed = lpp_pm::validation::registry_remote(r).map_err(|e| e.to_string())?;
-        return Ok(trimmed.to_string());
-    }
-    if let Ok(r) = std::env::var("KEEL_REGISTRY") {
-        let t = r.trim();
-        if t.is_empty() || t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("offline") {
-            return Err(
-                "no registry configured: pass --registry <git-url> or set KEEL_REGISTRY"
-                    .to_string(),
-            );
-        }
-        let trimmed = lpp_pm::validation::registry_remote(t).map_err(|e| e.to_string())?;
-        return Ok(trimmed.to_string());
-    }
-    Err("no registry configured: pass --registry <git-url> or set KEEL_REGISTRY".to_string())
-}
-
 fn registry_from_remote(remote: String) -> lpp_pm::Registry {
     let identity = lpp_pm::ContentAddress::of_bytes(remote.trim().as_bytes()).to_string();
     let cache = cache_dir();
     lpp_pm::Registry::new(remote, cache.join("registries").join(identity))
         .with_blob_store(cache.join("content"))
-}
-
-/// The shared git-registry when explicitly configured via `--registry` or `KEEL_REGISTRY`.
-fn registry(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
-    let remote = registry_remote(cli)?;
-    Ok(registry_from_remote(remote))
 }
 
 /// The shared git-registry for explicit registry commands (`publish`, `search`,

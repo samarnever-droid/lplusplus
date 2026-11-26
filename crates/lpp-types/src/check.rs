@@ -353,16 +353,17 @@ impl<'hir> TypeChecker<'hir> {
             let Some(receiver) = self.assignments.locals[first.index()] else {
                 continue;
             };
-            if let Some(definition) = self.nominal_definition(receiver) {
-                if !self.method_index.contains_key(&(definition, name)) {
-                    self.method_index.insert((definition, name), item_id);
-                    self.method_candidates
-                        .entry((definition, name))
-                        .or_default()
-                        .push(item_id);
-                    self.method_generics
-                        .insert(item_id, self.item_parameters[item_id.index()].clone());
-                }
+            if let Some(definition) = self.nominal_definition(receiver)
+                && let std::collections::btree_map::Entry::Vacant(e) =
+                    self.method_index.entry((definition, name))
+            {
+                e.insert(item_id);
+                self.method_candidates
+                    .entry((definition, name))
+                    .or_default()
+                    .push(item_id);
+                self.method_generics
+                    .insert(item_id, self.item_parameters[item_id.index()].clone());
             }
         }
         for (item_id, item) in self.package.items.enumerate() {
