@@ -8,6 +8,10 @@ set -euo pipefail
 KEEL_BIN="${KEEL_BIN:-keel}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+if [ -n "${GITHUBTOKENALL:-}" ] && [ -z "${KEEL_REGISTRY:-}" ]; then
+  export KEEL_REGISTRY="https://x-access-token:${GITHUBTOKENALL}@github.com/samarnever-droid/llppregistry.git"
+fi
+
 LEAF_PACKAGES=(
   lpp-semver
   lpp-toml

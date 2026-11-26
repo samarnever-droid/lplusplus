@@ -29,9 +29,10 @@
 //! (`docs/Safety_Mission.md`) already excludes unsynchronized
 //! cross-thread transfer/mutation of the same graph.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, RwLock, RwLockReadGuard};
 
 use libc::{c_void, free};
 
@@ -60,6 +61,50 @@ static ROOT_BUFFER: Mutex<Vec<(usize, i32)>> = Mutex::new(Vec::new());
 /// At most one collection at a time; nested triggers (releases issued
 /// by destructors during collection) defer to the next round.
 static COLLECTING: AtomicBool = AtomicBool::new(false);
+/// Collector-exclusion protocol lock: collectible mutator releases take a
+/// shared read lock while trial deletion holds the exclusive write lock.
+/// Acyclic (`Owned`) ARC objects never touch this lock.
+static COLLECTOR_LOCK: RwLock<()> = RwLock::new(());
+
+thread_local! {
+    static IN_COLLECTOR: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) struct CollectorReadGuard(Option<RwLockReadGuard<'static, ()>>);
+
+impl Drop for CollectorReadGuard {
+    fn drop(&mut self) {
+        drop(self.0.take());
+    }
+}
+
+/// Acquire shared mutator access against concurrent trial-deletion collection.
+/// Re-entrant calls from destructors invoked on the active collector thread
+/// bypass the read lock because that thread already holds the write lock.
+pub(crate) fn enter_collectible_mutator() -> CollectorReadGuard {
+    if IN_COLLECTOR.with(Cell::get) {
+        return CollectorReadGuard(None);
+    }
+    CollectorReadGuard(Some(
+        COLLECTOR_LOCK.read().unwrap_or_else(|e| e.into_inner()),
+    ))
+}
+
+struct ActiveCollectorScope;
+
+impl ActiveCollectorScope {
+    fn enter() -> Self {
+        IN_COLLECTOR.with(|flag| flag.set(true));
+        Self
+    }
+}
+
+impl Drop for ActiveCollectorScope {
+    fn drop(&mut self) {
+        IN_COLLECTOR.with(|flag| flag.set(false));
+        COLLECTING.store(false, Ordering::Release);
+    }
+}
 
 /// Observability for gates and tests: nodes reclaimed by the collector.
 #[unsafe(no_mangle)]
@@ -169,9 +214,11 @@ pub unsafe extern "C" fn lpp_trace_visit(ctx: *mut c_void, child: *mut c_void) {
 /// Caller must uphold the L++ cycle-collector ABI; any non-null ARC payload, trace context, and trace callback pointers must be valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_collect_cycles() {
-    if COLLECTING.swap(true, Ordering::AcqRel) {
+    if IN_COLLECTOR.with(Cell::get) || COLLECTING.swap(true, Ordering::AcqRel) {
         return; // a collection is already running (possibly ours)
     }
+    let _write_guard = COLLECTOR_LOCK.write().unwrap_or_else(|e| e.into_inner());
+    let _scope = ActiveCollectorScope::enter();
     loop {
         let freed = unsafe { collect_round() };
         let pending = ROOT_BUFFER.lock().map(|b| b.len()).unwrap_or(0);
@@ -179,7 +226,6 @@ pub unsafe extern "C" fn lpp_arc_collect_cycles() {
             break;
         }
     }
-    COLLECTING.store(false, Ordering::Release);
 }
 
 /// One trial-deletion round over the currently buffered roots.
@@ -296,7 +342,7 @@ unsafe fn collect_round() -> usize {
         deregister(ptr);
         unsafe {
             (*generation_cell(ptr)).fetch_add(1, Ordering::Release);
-            magic_cell(ptr).write_volatile(0);
+            (*magic_cell(ptr)).store(0, Ordering::Release);
             (*flags_cell(ptr)).store(0, Ordering::Release);
         }
         doomed.push((*addr, destructor, base));

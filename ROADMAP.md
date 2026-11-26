@@ -33,10 +33,14 @@ transparently below._
    `lpp-codegen-llvm` lowers full MIR, managed structs/enums/lists/tuples,
    cycle-collector ARC destructors, DWARF `-g`, SIMD intrinsics, kernel primitives,
    and `--backend llvm -O0`..`-O3`.
-4. **Concurrency safety enforcement — PARTIAL.** `docs/CONCURRENCY.md`
-   records the contract and open gaps. Add a concurrent-sharing fact to the
-   ownership plan, enforce `Send`/`Sync` rules, add a collector-exclusion
-   protocol, and validate under TSan.
+4. **Concurrency safety enforcement — MOSTLY DONE (v0.3.3).** `docs/CONCURRENCY.md`
+   records the contract. `OwnershipPlan` tracks `concurrent` facts distinct
+   from cycle-`Shared`, `OwnershipBalancePass` enforces `Send`/`Sync`
+   (`NonSendTransfer`) and `UnsynchronizedConcurrentWrite` (`E4403`) across
+   `spawn`/`thread_spawn`/`async` on Cranelift and LLVM, and `lpp-runtime`
+   enforces a `COLLECTOR_LOCK` rwlock collector-exclusion protocol with atomic
+   `magic_cell` headers and 8-thread concurrent cycle-collection stress tests.
+   Full Rust-nightly TSan CI job remains open for S4 proof.
 5. ~~Stack-placed `Frame` POD & zero-overhead POD `Owned` codegen~~ — **DONE in v0.3.0.**
    `lpp-codegen-api::ownership_lowering` identifies non-escaping `Frame` POD
    structs/tuples for stack allocation (`StackSlot` / `alloca`) with zero ARC

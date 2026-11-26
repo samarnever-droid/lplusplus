@@ -19,8 +19,8 @@ mod snapshot;
 mod verify;
 
 pub use balance::{
-    OwnershipBalanceError, OwnershipBalanceErrorKind, OwnershipBalancePass,
-    verify_ownership_balance,
+    OwnershipBalanceError, OwnershipBalanceErrorKind, OwnershipBalancePass, is_send_type,
+    is_sync_type, verify_ownership_balance,
 };
 pub use pass::OwnershipPlanPass;
 pub use plan::{

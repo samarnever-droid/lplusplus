@@ -285,3 +285,37 @@ fn random_graphs_never_free_live_and_always_reclaim_dead() {
         }
     }
 }
+
+#[test]
+fn multithreaded_cycle_collection_exclusion_stress() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let d0 = dtors();
+    const THREADS: usize = 8;
+    const CYCLES_PER_THREAD: usize = 40;
+    const NODES_PER_CYCLE: usize = 2;
+
+    std::thread::scope(|scope| {
+        for _ in 0..THREADS {
+            scope.spawn(|| unsafe {
+                for i in 0..CYCLES_PER_THREAD {
+                    let a = node();
+                    let b = node();
+                    link(a, 0, b);
+                    link(b, 0, a);
+                    lpp_arc_release(a);
+                    lpp_arc_release(b);
+                    if i % 5 == 0 {
+                        lpp_arc_collect_cycles();
+                    }
+                }
+            });
+        }
+    });
+
+    unsafe { lpp_arc_collect_cycles() };
+    assert_eq!(
+        dtors() - d0,
+        THREADS * CYCLES_PER_THREAD * NODES_PER_CYCLE,
+        "every concurrently created cycle node must be reclaimed exactly once"
+    );
+}

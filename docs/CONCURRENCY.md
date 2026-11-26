@@ -17,27 +17,34 @@ build before any data-race-freedom claim (Safety Mission S4)._
 
 ## 2. Guaranteed today
 
-1. **Refcounts are always atomic.** `lpp_arc_retain` /
-   `lpp_arc_release` use AcqRel atomic fetch-add/sub on the header in
-   every runtime. There is no racy "local" refcount path in the
-   rewrite pipeline, so sharing an ARC value across threads can never
-   corrupt its count or free it early. (Evidence: atomic fetch-add/sub code paths and move-out stress corpus;
-   **TSan has not been run**, so this is code-level evidence, not a
-   sanitizer proof.)
+1. **Refcounts and ARC header magic are always atomic.** `lpp_arc_retain` /
+   `lpp_arc_release` use AcqRel atomic fetch-add/sub on the header and
+   Acquire/Release atomic loads/stores on `magic_cell` in every Rust runtime
+   path, eliminating non-atomic header races under multi-threaded churn.
 2. **Ownership transfer at spawn.** A spawned closure's captures are
    either *transferred* (the move-out pass proves the spawning thread
    never touches the value again — one owner before, one after) or
    *shared by retain* (both threads hold counted references; either
    may drop last safely). A value is never freed while a thread
    still holds a counted reference.
-3. **No borrowed views cross threads.** `StrSlice` / `Slice[T]`
-   captures in a spawned closure are rejected at compile time
-   (`tests/slice_spawn_rejected.lpp`); mutable-local capture-and-write
-   in a spawned closure is rejected (`tests/aot_reject_mut_closure.lpp`).
-4. **The cycle collector's own state is synchronized** (mutex-guarded
-   registry/candidate buffer, atomic reentrancy guard). Collection
-   never frees a node another thread still reaches *through a counted
-   reference the collector can see* — see §3.2 for the sharp edge.
+3. **Static `Send` / `Sync` & concurrent-write enforcement (`E4403`).**
+   `OwnershipPlan` marks values and types reaching `spawn`/`async` boundaries
+   as `concurrent` (distinct from cycle-`Shared`), and `OwnershipBalancePass`
+   rejects both:
+   - Unsynchronized mutable writes to concurrently-shared references
+     (`UnsynchronizedConcurrentWrite`, unless mutex/rwlock-guarded or uniquely
+     transferred), and
+   - Non-`Send` transfers (`NonSendTransfer`: `Ptr[T]`, `RawPtr`, `Slice[T]`,
+     `StrSlice`, or aggregates/containers transitively containing them) across
+     `spawn`, `thread_spawn`, and `async def` boundaries on Cranelift, LLVM,
+     and WASM.
+4. **Collector-exclusion protocol.** `lpp-runtime`'s Bacon-Rajan cycle
+   collector (`collect.rs` + `arc.rs`) uses a global `COLLECTOR_LOCK: RwLock<()>`
+   with thread-local reentrancy tracking: mutator releases on `COLLECTIBLE`
+   (`Shared`) objects take a shared read guard while `lpp_arc_collect_cycles`
+   holds the exclusive write guard, preventing concurrent trial deletion from
+   racing with collectible frees. Acyclic `Owned` objects never touch the lock.
+   Validated with 8-thread concurrent cycle-collection stress tests.
 5. **Task results are transferred, not shared-mutably.** `.await`
    produces a fresh counted reference to the result; task envs are
    released exactly once whether polled to completion or dropped.

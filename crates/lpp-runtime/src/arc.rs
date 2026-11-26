@@ -40,8 +40,8 @@ pub(crate) fn header_of(payload: *const c_void) -> *mut c_void {
         .cast::<c_void>()
 }
 
-pub(crate) fn magic_cell(payload: *const c_void) -> *mut u32 {
-    let hdr = header_of(payload).cast::<u32>();
+pub(crate) fn magic_cell(payload: *const c_void) -> *mut AtomicU32 {
+    let hdr = header_of(payload).cast::<AtomicU32>();
     unsafe { hdr.add(ARC_MAGIC_OFFSET / 4) }
 }
 
@@ -103,7 +103,7 @@ pub(crate) fn is_valid_arc_ptr(ptr: *const c_void) -> bool {
     if !addr.is_multiple_of(8) || addr < MIN_VALID_ADDR {
         return false;
     }
-    let magic = unsafe { magic_cell(ptr).read_volatile() };
+    let magic = unsafe { (*magic_cell(ptr)).load(Ordering::Acquire) };
     magic == ARC_MAGIC
 }
 
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn lpp_arc_alloc_with_destructor(
     let header_base = unsafe { base.cast::<u8>().add(destructor_prefix) };
     let payload = unsafe { header_base.add(ARC_HEADER_SIZE) }.cast::<c_void>();
     unsafe {
-        magic_cell(payload).write_volatile(ARC_MAGIC);
+        (*magic_cell(payload)).store(ARC_MAGIC, Ordering::Release);
         (*refcount_cell(payload)).store(1, Ordering::Relaxed);
         (*generation_cell(payload)).store(next_generation(), Ordering::Relaxed);
         (*flags_cell(payload)).store(
@@ -194,18 +194,31 @@ pub unsafe extern "C" fn lpp_arc_release(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
         return;
     }
-    // Buffer while this caller still holds a strong reference so sibling
-    // threads freeing the last reference cannot race with reading `flags`.
-    let rc_now = unsafe { (*refcount_cell(ptr)).load(Ordering::Acquire) };
-    let trigger_collect = if rc_now > 1 {
-        crate::collect::note_possible_root_buffer(ptr)
-    } else {
-        false
+    let is_collectible =
+        unsafe { (*flags_cell(ptr)).load(Ordering::Acquire) } & ARC_FLAG_COLLECTIBLE != 0;
+    let trigger_collect = {
+        let _collector_guard = if is_collectible {
+            Some(crate::collect::enter_collectible_mutator())
+        } else {
+            None
+        };
+        // Buffer while this caller still holds a strong reference so sibling
+        // threads freeing the last reference cannot race with reading `flags`.
+        let rc_now = unsafe { (*refcount_cell(ptr)).load(Ordering::Acquire) };
+        let should_collect = if is_collectible && rc_now > 1 {
+            crate::collect::note_possible_root_buffer(ptr)
+        } else {
+            false
+        };
+        let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
+        if prev == 1 {
+            unsafe { drop_arc(ptr) };
+            false
+        } else {
+            prev > 1 && should_collect
+        }
     };
-    let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
-    if prev == 1 {
-        unsafe { drop_arc(ptr) };
-    } else if prev > 1 && trigger_collect {
+    if trigger_collect {
         unsafe { crate::collect::lpp_arc_collect_cycles() };
     }
 }
@@ -222,7 +235,7 @@ unsafe fn drop_arc(ptr: *mut c_void) {
     let (destructor, base) = unsafe { destructor_and_allocation_base(ptr) };
     unsafe {
         (*generation_cell(ptr)).fetch_add(1, Ordering::Release);
-        magic_cell(ptr).write_volatile(0);
+        (*magic_cell(ptr)).store(0, Ordering::Release);
         if let Some(f) = destructor {
             f(ptr);
         }
@@ -255,16 +268,29 @@ pub unsafe extern "C" fn lpp_arc_release_local(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
         return;
     }
-    let rc_now = unsafe { (*refcount_cell(ptr)).load(Ordering::Acquire) };
-    let trigger_collect = if rc_now > 1 {
-        crate::collect::note_possible_root_buffer(ptr)
-    } else {
-        false
+    let is_collectible =
+        unsafe { (*flags_cell(ptr)).load(Ordering::Acquire) } & ARC_FLAG_COLLECTIBLE != 0;
+    let trigger_collect = {
+        let _collector_guard = if is_collectible {
+            Some(crate::collect::enter_collectible_mutator())
+        } else {
+            None
+        };
+        let rc_now = unsafe { (*refcount_cell(ptr)).load(Ordering::Acquire) };
+        let should_collect = if is_collectible && rc_now > 1 {
+            crate::collect::note_possible_root_buffer(ptr)
+        } else {
+            false
+        };
+        let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
+        if prev == 1 {
+            unsafe { drop_arc(ptr) };
+            false
+        } else {
+            prev > 1 && should_collect
+        }
     };
-    let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
-    if prev == 1 {
-        unsafe { drop_arc(ptr) };
-    } else if prev > 1 && trigger_collect {
+    if trigger_collect {
         unsafe { crate::collect::lpp_arc_collect_cycles() };
     }
 }

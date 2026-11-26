@@ -769,3 +769,92 @@ def main():
         "expected uniquely transferred async task arg to pass, got {errors_u:?}"
     );
 }
+
+#[test]
+fn step3_send_sync_rejects_raw_ptr_and_slice_across_spawn_and_async() {
+    // 1. RawPtr captured across `spawn` is rejected as NonSendTransfer (E4403).
+    let raw_ptr_spawn = r#"
+def main():
+    unsafe:
+        p := ptr_null() as RawPtr
+        spawn fn():
+            q := p
+            print(1)
+"#;
+    let (prog, types) = executable(raw_ptr_spawn);
+    let plan = compute_ownership_plan(&prog, &types).unwrap();
+    let errors = verify_ownership_balance(&prog, &types, &plan);
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e.kind, OwnershipBalanceErrorKind::NonSendTransfer { .. })),
+        "capturing RawPtr across spawn must be rejected as NonSendTransfer: {errors:?}"
+    );
+
+    // 2. Struct transitively wrapping RawPtr passed into `async def` is rejected.
+    let wrapped_ptr_async = r#"
+struct Handle:
+    raw: RawPtr
+
+async def use_handle(h: Handle) -> Int:
+    return 1
+
+def main():
+    unsafe:
+        h := Handle(ptr_null() as RawPtr)
+        t := use_handle(h)
+        print(t.await)
+"#;
+    let (prog2, types2) = executable(wrapped_ptr_async);
+    let plan2 = compute_ownership_plan(&prog2, &types2).unwrap();
+    let errors2 = verify_ownership_balance(&prog2, &types2, &plan2);
+    assert!(
+        errors2
+            .iter()
+            .any(|e| matches!(e.kind, OwnershipBalanceErrorKind::NonSendTransfer { .. })),
+        "passing struct wrapping RawPtr to async def must be rejected as NonSendTransfer: {errors2:?}"
+    );
+
+    // 3. StrSlice passed into `async def` is rejected.
+    let slice_async = r#"
+async def inspect(s: StrSlice) -> Int:
+    return 1
+
+def main():
+    text := "hello"
+    view := str_slice(text, 0, 2)
+    t := inspect(view)
+    print(t.await)
+"#;
+    let (prog3, types3) = executable(slice_async);
+    let plan3 = compute_ownership_plan(&prog3, &types3).unwrap();
+    let errors3 = verify_ownership_balance(&prog3, &types3, &plan3);
+    assert!(
+        errors3
+            .iter()
+            .any(|e| matches!(e.kind, OwnershipBalanceErrorKind::NonSendTransfer { .. })),
+        "passing StrSlice to async def must be rejected as NonSendTransfer: {errors3:?}"
+    );
+
+    // 4. Plain Send types (Int, Str, Owned struct) are accepted.
+    let send_ok = r#"
+struct Payload:
+    id: Int
+    label: Str
+
+async def process(p: Payload) -> Int:
+    return p.id
+
+def main():
+    p := Payload(7, "ok")
+    t := process(p)
+    print(t.await)
+"#;
+    let (prog4, types4) = executable(send_ok);
+    let plan4 = compute_ownership_plan(&prog4, &types4).unwrap();
+    let errors4 = verify_ownership_balance(&prog4, &types4, &plan4);
+    assert!(
+        errors4.is_empty(),
+        "Send Payload across async def must pass: {errors4:?}"
+    );
+}

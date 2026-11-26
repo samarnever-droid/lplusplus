@@ -337,3 +337,77 @@ unsafe def a64_kmain():
     assert_eq!(&a64_bytes[0..4], b"\x7fELF");
     assert_eq!(u16::from_le_bytes([a64_bytes[18], a64_bytes[19]]), 183); // EM_AARCH64
 }
+
+#[test]
+fn llvm_parity_concurrency_mutex_atomics_set_deque_and_send_sync() {
+    let source = r#"
+struct Counter:
+    value: Int
+
+async def worker(a: Int, b: Int) -> Int:
+    return a * 10 + b
+
+def main():
+    atom := atomic_new(10)
+    atomic_add(atom, 5)
+    atomic_add(atom, 7)
+    print(atomic_load(atom))
+
+    m := mutex_new()
+    mut box := Counter(1)
+    mutex_lock(m)
+    box.value = box.value + 41
+    mutex_unlock(m)
+    print(box.value)
+
+    t1 := worker(3, 4)
+    t2 := worker(5, 6)
+    print(t1.await + t2.await)
+
+    mut s := set_new()
+    set_add(s, 10)
+    set_add(s, 20)
+    set_add(s, 10)
+    print(set_len(s))
+    print_bool(set_has(s, 20))
+
+    mut dq := deque_new()
+    deque_push_back(dq, 100)
+    deque_push_front(dq, 50)
+    print(deque_len(dq))
+    print(deque_pop_front(dq))
+    print(deque_pop_back(dq))
+"#;
+    assert_llvm_parity(
+        "concur_collections",
+        source,
+        "22\n42\n90\n2\n1\n2\n50\n100\n",
+    );
+
+    // Verify Send/Sync boundary enforcement (E4403 NonSendTransfer) is identical on Cranelift and LLVM.
+    let bad_send = r#"
+def main():
+    unsafe:
+        p := ptr_null() as RawPtr
+        spawn fn():
+            q := p
+            print(1)
+"#;
+    let dir = workdir("send_sync_reject_parity");
+    let entry = dir.join("main.lpp");
+    std::fs::write(&entry, bad_send).unwrap();
+    for backend in [BackendChoice::Cranelift, BackendChoice::Llvm] {
+        let err = lpp_driver::compile_entry_with_options(
+            &entry,
+            "send_sync_reject",
+            backend,
+            CompileOptions::for_backend(backend),
+        )
+        .expect_err("RawPtr across spawn must be rejected");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("NonSendTransfer") || msg.contains("E4403"),
+            "expected NonSendTransfer/E4403 on {backend:?}, got: {msg}"
+        );
+    }
+}

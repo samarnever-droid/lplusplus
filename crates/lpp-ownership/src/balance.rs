@@ -91,6 +91,15 @@ pub enum OwnershipBalanceErrorKind {
         block: BasicBlockId,
         local: MirLocalId,
     },
+    /// A non-`Send` value (such as `Ptr[T]`, `RawPtr`, `Slice[T]`, `StrSlice`,
+    /// or an aggregate/container transitively containing one) is transferred
+    /// across a `spawn`, `thread_spawn`, or `async` concurrency boundary.
+    NonSendTransfer {
+        function: MirFunctionId,
+        block: BasicBlockId,
+        local: MirLocalId,
+        ty: TypeId,
+    },
 }
 
 /// A balance proof failure (code `E4403`).
@@ -254,7 +263,193 @@ pub fn verify_ownership_balance(
         }
     }
     result.extend(verify_concurrent_writes(program, types));
+    result.extend(verify_send_sync_boundaries(program, types));
     result
+}
+
+/// Whether `ty` is `Send` (safe to transfer across thread/task boundaries).
+///
+/// Raw pointers (`Ptr[T]`, `RawPtr`) and borrowed views (`Slice[T]`, `StrSlice`)
+/// are `!Send`, as is any compound type (struct, enum, tuple, list, map, task)
+/// that transitively contains a `!Send` type.
+#[must_use]
+pub fn is_send_type(program: &MirProgram, types: &TypeInterner, ty: TypeId) -> bool {
+    let mut visited = BTreeSet::new();
+    is_send_type_inner(program, types, ty, &mut visited)
+}
+
+/// Whether `ty` is `Sync` (safe to share concurrently across threads).
+///
+/// Any `!Send` type is also `!Sync`. For heap-allocated aggregates/containers,
+/// concurrent mutable access is further enforced by `verify_concurrent_writes`.
+#[must_use]
+pub fn is_sync_type(program: &MirProgram, types: &TypeInterner, ty: TypeId) -> bool {
+    is_send_type(program, types, ty)
+}
+
+fn is_send_type_inner(
+    program: &MirProgram,
+    types: &TypeInterner,
+    ty: TypeId,
+    visited: &mut BTreeSet<TypeId>,
+) -> bool {
+    if !visited.insert(ty) {
+        return true;
+    }
+    match types.kind(ty) {
+        TypeKind::Ptr(_) | TypeKind::Slice(_) => false,
+        TypeKind::Primitive(PrimitiveType::RawPtr | PrimitiveType::StrSlice) => false,
+        TypeKind::List(inner) | TypeKind::Task(inner) => {
+            is_send_type_inner(program, types, inner, visited)
+        }
+        TypeKind::Map { key, value } => {
+            is_send_type_inner(program, types, key, visited)
+                && is_send_type_inner(program, types, value, visited)
+        }
+        TypeKind::Tuple(elements) => types
+            .list(elements)
+            .iter()
+            .all(|&elem| is_send_type_inner(program, types, elem, visited)),
+        TypeKind::Nominal { .. } => {
+            for (_, aggregate) in program.aggregates() {
+                if aggregate.ty != ty {
+                    continue;
+                }
+                for &field_id in program.aggregate_fields(aggregate) {
+                    if let Some(field) = program.field(field_id)
+                        && !is_send_type_inner(program, types, field.ty, visited)
+                    {
+                        return false;
+                    }
+                }
+                for &variant_id in program.aggregate_variants(aggregate) {
+                    if let Some(variant) = program.variant(variant_id) {
+                        for &field_id in program.variant_fields(variant) {
+                            if let Some(field) = program.field(field_id)
+                                && !is_send_type_inner(program, types, field.ty, visited)
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
+fn verify_send_sync_boundaries(
+    program: &MirProgram,
+    types: &TypeInterner,
+) -> Vec<OwnershipBalanceError> {
+    let mut violations = Vec::new();
+    let mut reported: BTreeSet<(MirFunctionId, BasicBlockId, MirLocalId)> = BTreeSet::new();
+
+    for (fn_id, _) in program.functions() {
+        let blocks = reachable_function_blocks(program, fn_id);
+        // Track closure capture operands per local in this function so
+        // `spawn closure` / `thread_spawn(closure)` checks captured values too.
+        let mut closure_captures: BTreeMap<MirLocalId, Vec<MirLocalId>> = BTreeMap::new();
+        for &block_id in &blocks {
+            let Some(block) = program.block(block_id) else {
+                continue;
+            };
+            for &inst_id in program.block_instructions(block) {
+                let Some(inst) = program.instruction(inst_id) else {
+                    continue;
+                };
+                if let InstructionKind::Assign {
+                    target,
+                    value: Rvalue::MakeClosure { captures, .. },
+                } = inst.kind
+                {
+                    let cap_locals: Vec<MirLocalId> = program
+                        .operands(captures)
+                        .iter()
+                        .filter_map(|op| match *op {
+                            Operand::Copy(l) => Some(l),
+                            _ => None,
+                        })
+                        .collect();
+                    closure_captures.insert(target, cap_locals);
+                }
+            }
+        }
+
+        let mut check_local = |block_id: BasicBlockId, local: MirLocalId, origin: OriginId| {
+            if let Some(local_data) = program.local(local)
+                && !is_send_type(program, types, local_data.ty)
+                && reported.insert((fn_id, block_id, local))
+            {
+                violations.push(OwnershipBalanceError {
+                    kind: OwnershipBalanceErrorKind::NonSendTransfer {
+                        function: fn_id,
+                        block: block_id,
+                        local,
+                        ty: local_data.ty,
+                    },
+                    origin: Some(origin),
+                });
+            }
+        };
+
+        for &block_id in &blocks {
+            let Some(block) = program.block(block_id) else {
+                continue;
+            };
+            for &inst_id in program.block_instructions(block) {
+                let Some(inst) = program.instruction(inst_id) else {
+                    continue;
+                };
+                let InstructionKind::Assign { value, .. } = inst.kind else {
+                    continue;
+                };
+                match value {
+                    Rvalue::Spawn(Operand::Copy(local)) => {
+                        check_local(block_id, local, inst.origin);
+                        if let Some(caps) = closure_captures.get(&local) {
+                            for &cap in caps {
+                                check_local(block_id, cap, inst.origin);
+                            }
+                        }
+                    }
+                    Rvalue::Call { callee, arguments } => {
+                        let is_async = match callee {
+                            Operand::Function(cid) => program
+                                .function(cid)
+                                .is_some_and(|f| f.kind == MirFunctionKind::Async),
+                            _ => false,
+                        };
+                        if is_async {
+                            for &arg in program.operands(arguments) {
+                                if let Operand::Copy(local) = arg {
+                                    check_local(block_id, local, inst.origin);
+                                }
+                            }
+                        }
+                    }
+                    Rvalue::Builtin { builtin, arguments }
+                        if short_builtin_name(builtin) == "thread_spawn" =>
+                    {
+                        for &arg in program.operands(arguments) {
+                            if let Operand::Copy(local) = arg {
+                                check_local(block_id, local, inst.origin);
+                                if let Some(caps) = closure_captures.get(&local) {
+                                    for &cap in caps {
+                                        check_local(block_id, cap, inst.origin);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    violations
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
