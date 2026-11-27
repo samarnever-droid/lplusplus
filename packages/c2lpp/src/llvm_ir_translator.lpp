@@ -1393,11 +1393,13 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
                     fputs(str_concat(ind, str_concat(call_s, "\n")), fp)
             return
 
-        # Handle variadic extern libc calls (open64, fcntl64, mremap) -> pad to fixed 3/4 args
+        # Handle variadic extern libc calls (open64, fcntl64, mremap, printf, snprintf, ...) -> pad to fixed arity
         if map_has(m.extern_varargs, callee) && map_get(m.extern_varargs, callee) == 1:
             mut want_n := 3
             if callee == "@mremap":
                 want_n = 5
+            elif callee == "@printf" || callee == "@fprintf" || callee == "@snprintf" || callee == "@sprintf":
+                want_n = 6
             while len(arg_exprs) < want_n:
                 list_push(arg_exprs, "0")
 
@@ -1492,7 +1494,9 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
                 fid := len(m.func_id_to_name)
                 map_put(m.func_ids, sym, fid)
                 list_push(m.func_id_to_name, str_concat(sym, ""))
-                lpp_n := ll_sanitize_name(str_substr(sym, 1, str_len(sym) - 1))
+                mut lpp_n := ll_sanitize_name(str_substr(sym, 1, str_len(sym) - 1))
+                if sym == "@main":
+                    lpp_n = "c_main"
                 list_push(m.func_lpp_names, lpp_n)
                 list_push(m.func_sigs, info[2])
                 list_push(m.func_ret_tys, info[1])
@@ -1543,11 +1547,13 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             us := str_find(sig, "_")
             ret_ch := str_substr(sig, 0, us)
             mut pchars := str_substr(sig, us + 1, str_len(sig) - us - 1)
-            # Pad variadic libc calls (open64, fcntl64, mremap) to fixed arity
+            # Pad variadic libc calls (open64, fcntl64, mremap, printf, ...) to fixed arity
             if map_has(m.extern_varargs, esym) && map_get(m.extern_varargs, esym) == 1:
                 mut want_n := 3
                 if esym == "@mremap":
                     want_n = 5
+                elif esym == "@printf" || esym == "@fprintf" || esym == "@snprintf" || esym == "@sprintf":
+                    want_n = 6
                 while str_len(pchars) < want_n:
                     pchars = str_concat(pchars, "i")
             mut pdecls := list_new()
@@ -1696,6 +1702,26 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
         else:
             fputs("    return\n\n", fp)
         di = di + 1
+
+    # Auto-emit L++ entry point if C code defined @main
+    if map_has(m.func_ids, "@main"):
+        msig := ll_get_func_sig(m, "@main")
+        mus := str_find(msig, "_")
+        mret := str_substr(msig, 0, mus)
+        mparams := str_substr(msig, mus + 1, str_len(msig) - mus - 1)
+        fputs("def main():\n", fp)
+        fputs("    c2lpp_init_globals()\n", fp)
+        mut mcall := "c_main()"
+        if str_len(mparams) == 2:
+            mcall = "c_main(0, 0)"
+        elif str_len(mparams) == 1:
+            mcall = "c_main(0)"
+        if mret == "v":
+            fputs(str_concat("    ", str_concat(mcall, "\n\n")), fp)
+        else:
+            fputs(str_concat("    rc := ", str_concat(mcall, "\n")), fp)
+            fputs("    if rc != 0:\n", fp)
+            fputs("        exit(rc)\n\n", fp)
 
     fclose(fp)
     print_str(str_concat("c2lpp --full: translated ", str_concat(int_to_str(fn_count), str_concat(" funcs, ", str_concat(int_to_str(len(m.global_names)), str_concat(" globals (", str_concat(int_to_str(m.global_total), str_concat(" B), ", str_concat(int_to_str(len(m.extern_names)), str_concat(" externs, ", str_concat(int_to_str(len(m.needed_ind_list)), " indirect dispatchers")))))))))))
