@@ -13,7 +13,6 @@ use lpp_mir::{
     Operand, Rvalue, Terminator,
 };
 
-use crate::passes::analysis::single_def_constants;
 use crate::passes::constfold::IN_PLACE_PRESERVED;
 use crate::{MirPass, PassContext, PassFailure};
 
@@ -36,9 +35,11 @@ impl MirPass for ConstPropPass {
         program: &mut MirProgram,
         _context: &PassContext<'_>,
     ) -> Result<(), PassFailure> {
+        let place_roots: std::collections::BTreeSet<MirLocalId> =
+            program.places().map(|(_, place)| place.root).collect();
         let function_ids: Vec<MirFunctionId> = program.functions().map(|(id, _)| id).collect();
         for function_id in function_ids {
-            let Some((map, block_ids)) = function_shapes(program, function_id) else {
+            let Some((map, block_ids)) = function_shapes(program, function_id, &place_roots) else {
                 continue;
             };
             if map.is_empty() {
@@ -78,10 +79,11 @@ impl MirPass for ConstPropPass {
 fn function_shapes(
     program: &MirProgram,
     function_id: MirFunctionId,
+    place_roots: &std::collections::BTreeSet<MirLocalId>,
 ) -> Option<(BTreeMap<MirLocalId, Constant>, Vec<BasicBlockId>)> {
     let function = program.function(function_id)?;
     Some((
-        single_def_constants(program, function),
+        crate::passes::analysis::single_def_constants_with_places(program, function, place_roots),
         program.function_blocks(function).to_vec(),
     ))
 }

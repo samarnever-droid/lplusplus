@@ -170,6 +170,9 @@ pub fn verify_ownership_balance(
                     .is_some_and(|local| is_heap_type(types, local.ty))
             })
             .collect();
+        if heap_locals.is_empty() {
+            continue;
+        }
 
         let mut violations: BTreeMap<(BasicBlockId, MirLocalId), OriginId> = BTreeMap::new();
         let mut worklist: Vec<BasicBlockId> = Vec::new();
@@ -265,6 +268,44 @@ pub fn verify_ownership_balance(
     result.extend(verify_concurrent_writes(program, types));
     result.extend(verify_send_sync_boundaries(program, types));
     result
+}
+
+fn program_has_concurrency(program: &MirProgram) -> bool {
+    for (_, function) in program.functions() {
+        if function.kind == MirFunctionKind::Async {
+            return true;
+        }
+        for &block_id in program.function_blocks(function) {
+            let Some(block) = program.block(block_id) else {
+                continue;
+            };
+            for &inst_id in program.block_instructions(block) {
+                let Some(inst) = program.instruction(inst_id) else {
+                    continue;
+                };
+                if let InstructionKind::Assign { value, .. } = inst.kind {
+                    match value {
+                        Rvalue::Spawn(_) => return true,
+                        Rvalue::Builtin { builtin, .. } => {
+                            let name = short_builtin_name(builtin);
+                            if matches!(
+                                name,
+                                "thread_spawn"
+                                    | "mutex_lock"
+                                    | "mutex_unlock"
+                                    | "rwlock_wrlock"
+                                    | "rwlock_wrunlock"
+                            ) {
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Whether `ty` is `Send` (safe to transfer across thread/task boundaries).
@@ -1310,6 +1351,9 @@ fn verify_concurrent_writes(
     program: &MirProgram,
     types: &TypeInterner,
 ) -> Vec<OwnershipBalanceError> {
+    if !program_has_concurrency(program) {
+        return Vec::new();
+    }
     let mut summaries = ConcurSummaries::default();
     let mut blocks_by_fn: BTreeMap<MirFunctionId, Vec<BasicBlockId>> = BTreeMap::new();
     let mut live_after_by_fn: BTreeMap<

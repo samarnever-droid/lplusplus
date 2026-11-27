@@ -32,7 +32,17 @@ pub fn single_def_constants(
 ) -> BTreeMap<MirLocalId, Constant> {
     let place_roots: std::collections::BTreeSet<MirLocalId> =
         program.places().map(|(_, place)| place.root).collect();
+    single_def_constants_with_places(program, function, &place_roots)
+}
 
+/// Faster variant that reuses a precomputed set of all `MirPlace` roots across
+/// a pass's function loop, avoiding O(F * P) work on large programs.
+#[must_use]
+pub fn single_def_constants_with_places(
+    program: &MirProgram,
+    function: &MirFunction,
+    place_roots: &std::collections::BTreeSet<MirLocalId>,
+) -> BTreeMap<MirLocalId, Constant> {
     // Count assigns per local and remember the one constant def, if
     // there is exactly one.
     let mut defs: BTreeMap<MirLocalId, (usize, Option<Constant>)> = BTreeMap::new();

@@ -396,9 +396,6 @@ pub(crate) fn emit_llvm_ir_with_options(
     let mut link_libraries = Vec::new();
     for &ext_id in &plan.external_functions {
         let ext = program.external_function(ext_id).expect("ext");
-        if imported_symbols.contains(&ext.name) {
-            continue;
-        }
         if let Some(lib) = ext.link_library.as_deref()
             && !link_libraries.iter().any(|existing| existing == lib)
         {

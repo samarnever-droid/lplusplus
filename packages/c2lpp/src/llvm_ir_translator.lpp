@@ -61,13 +61,13 @@ def ll_strip_attrs(s_in: Str) -> Str:
     mut ti := 0
     while ti < len(toks):
         t := toks[ti]
-        if t == "noundef" || t == "signext" || t == "zeroext" || t == "nonnull" || t == "readonly" || t == "writeonly" || t == "nocapture" || t == "noalias" || t == "returned" || t == "inreg" || t == "swiftself" || t == "immarg" || t == "dso_local" || t == "internal" || t == "private" || t == "external" || t == "linkonce_odr" || t == "weak" || t == "common" || t == "unnamed_addr" || t == "local_unnamed_addr" || t == "hidden" || t == "protected" || t == "fastcc" || t == "ccc" || t == "tail" || t == "musttail" || t == "notail" || t == "nuw" || t == "nsw" || t == "exact" || t == "inbounds" || t == "volatile" || t == "disjoint":
+        if t == "noundef" || t == "signext" || t == "zeroext" || t == "nonnull" || t == "readonly" || t == "writeonly" || t == "readnone" || t == "allocptr" || t == "writable" || t == "dead_on_unwind" || t == "nocapture" || t == "noalias" || t == "returned" || t == "inreg" || t == "swiftself" || t == "immarg" || t == "dso_local" || t == "internal" || t == "private" || t == "external" || t == "linkonce_odr" || t == "weak" || t == "common" || t == "unnamed_addr" || t == "local_unnamed_addr" || t == "hidden" || t == "protected" || t == "fastcc" || t == "ccc" || t == "tail" || t == "musttail" || t == "notail" || t == "nuw" || t == "nsw" || t == "exact" || t == "inbounds" || t == "volatile" || t == "disjoint" || t == "nneg" || t == "nusw" || t == "fast" || t == "nnan" || t == "ninf" || t == "nsz" || t == "arcp" || t == "contract" || t == "afn" || t == "reassoc":
             ti = ti + 1
             continue
         if t == "align" || t == "addrspace":
             ti = ti + 2
             continue
-        if str_starts_with(t, "dereferenceable") || str_starts_with(t, "align(") || str_starts_with(t, "byval(") || str_starts_with(t, "sret(") || str_starts_with(t, "nofree") || str_starts_with(t, "nosync") || str_starts_with(t, "willreturn") || str_starts_with(t, "memory(") || str_starts_with(t, "range(") || str_starts_with(t, "captures("):
+        if str_starts_with(t, "dereferenceable") || str_starts_with(t, "align(") || str_starts_with(t, "byval(") || str_starts_with(t, "sret(") || str_starts_with(t, "nofree") || str_starts_with(t, "nosync") || str_starts_with(t, "willreturn") || str_starts_with(t, "memory(") || str_starts_with(t, "range(") || str_starts_with(t, "captures(") || str_starts_with(t, "initializes("):
             ti = ti + 1
             continue
         list_push(out, t)
@@ -386,7 +386,7 @@ def ll_resolve_operand(m: LLModule, ty_in: Str, val_in: Str) -> Str:
         return ll_ssa_lookup(m, val)
     if str_starts_with(val, "@"):
         if map_has(m.global_offsets, val):
-            return str_concat("(_gbase() + ", str_concat(int_to_str(map_get(m.global_offsets, val)), ")"))
+            return str_concat("(_gb + ", str_concat(int_to_str(map_get(m.global_offsets, val)), ")"))
         if map_has(m.func_ids, val):
             ll_mark_addr_taken(m, val)
             return int_to_str(map_get(m.func_ids, val))
@@ -396,7 +396,7 @@ def ll_resolve_operand(m: LLModule, ty_in: Str, val_in: Str) -> Str:
         bsym := gep[0]
         boff := str_to_int(gep[1])
         if map_has(m.global_offsets, bsym):
-            return str_concat("(_gbase() + ", str_concat(int_to_str(map_get(m.global_offsets, bsym) + boff), ")"))
+            return str_concat("(_gb + ", str_concat(int_to_str(map_get(m.global_offsets, bsym) + boff), ")"))
         return "0"
     if str_starts_with(val, "inttoptr"):
         lp := str_find(val, "(")
@@ -423,13 +423,13 @@ def ll_resolve_operand(m: LLModule, ty_in: Str, val_in: Str) -> Str:
 
 def ll_sign_ext_expr(ty: Str, expr: Str) -> Str:
     if ty == "i1":
-        return str_concat("_sext1(", str_concat(expr, ")"))
+        return str_concat("(((", str_concat(expr, ") << 63) >> 63)"))
     if ty == "i8":
-        return str_concat("_sext8(", str_concat(expr, ")"))
+        return str_concat("(((", str_concat(expr, ") << 56) >> 56)"))
     if ty == "i16":
-        return str_concat("_sext16(", str_concat(expr, ")"))
+        return str_concat("(((", str_concat(expr, ") << 48) >> 48)"))
     if ty == "i32":
-        return str_concat("_sext32(", str_concat(expr, ")"))
+        return str_concat("(((", str_concat(expr, ") << 32) >> 32)"))
     return expr
 
 def ll_zero_ext_expr(ty: Str, expr: Str) -> Str:
@@ -487,6 +487,25 @@ def ll_scan_uses_in_line(s: Str, bbi: Int, def_bb: Map[Str, Int], cross_bb: Map[
         else:
             i = i + 1
 
+def ll_line_uses_global(m: LLModule, s: Str) -> Bool:
+    if !str_contains(s, "@"):
+        return false
+    n := str_len(s)
+    mut i := 0
+    while i < n:
+        if ord(char_at(s, i)) == 64:
+            mut j := i + 1
+            while j < n && ll_is_ident_ch(str_substr(s, j, 1)):
+                j = j + 1
+            if j > i + 1:
+                sym := str_substr(s, i, j - i)
+                if map_has(m.global_offsets, sym):
+                    return true
+            i = j
+        else:
+            i = i + 1
+    return false
+
 def ll_access_size(ty: Str) -> Int:
     if ty == "i1" || ty == "i8":
         return 1
@@ -513,9 +532,9 @@ def ll_is_statically_safe_ptr(m: LLModule, ptr_expr: Str, raw_sym: Str, access_s
         if off >= 0 && off + access_sz <= frame_size:
             m.stat_proven_stack = m.stat_proven_stack + 1
             return true
-    # Tier 0b: Static global `(_gbase() + K)` proven within global_total (0 runtime overhead!)
-    if str_starts_with(ptr_expr, "(_gbase() + ") && str_ends_with(ptr_expr, ")") && !str_contains(ptr_expr, "*"):
-        num_s := str_substr(ptr_expr, 12, str_len(ptr_expr) - 13)
+    # Tier 0b: Static global `(_gb + K)` proven within global_total (0 runtime overhead!)
+    if str_starts_with(ptr_expr, "(_gb + ") && str_ends_with(ptr_expr, ")") && !str_contains(ptr_expr, "*"):
+        num_s := str_substr(ptr_expr, 7, str_len(ptr_expr) - 8)
         if !str_contains(num_s, "(") && !str_contains(num_s, " "):
             off := str_to_int(num_s)
             if off >= 0 && off + access_sz <= m.global_total:
@@ -539,7 +558,45 @@ def ll_is_statically_safe_ptr(m: LLModule, ptr_expr: Str, raw_sym: Str, access_s
         map_put(checked_ptrs, raw_sym, access_sz)
     return false
 
-def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str], bb_starts: List[Int], bb_ends: List[Int], label_to_bb: Map[Str, Int], alloca_offs: Map[Str, Int], edge_phi_map: Map[Str, Int], edge_phi_lists: List[List[Str]], frame_size: Int, ret_lpp: Str, ind: Str, fp: RawPtr):
+def ll_try_fuse_cmp_br(bbi: Int, lhs_tok: Str, raw_lhs: Str, cond: Str, idx_in: Int, end_idx: Int, body_lines: List[Str], label_to_bb: Map[Str, Int], edge_phi_map: Map[Str, Int], edge_phi_lists: List[List[Str]], cross_bb: Map[Str, Int], ind: Str, fp: RawPtr) -> Int:
+    if map_has(cross_bb, raw_lhs):
+        return -1
+    mut ni := idx_in
+    while ni < end_idx && str_len(ll_strip_trailing_meta(body_lines[ni])) == 0:
+        ni = ni + 1
+    if ni >= end_idx:
+        return -1
+    ns := ll_strip_trailing_meta(body_lines[ni])
+    if !str_starts_with(ns, "br "):
+        return -1
+    br_rest := str_trim(str_substr(ns, 3, str_len(ns) - 3))
+    if str_starts_with(br_rest, "label "):
+        return -1
+    bparts := ll_split_top_level(br_rest)
+    if len(bparts) < 3:
+        return -1
+    cv := ll_split_type_and_val(bparts[0])
+    if cv[0] != "i1" || str_trim(cv[1]) != lhs_tok:
+        return -1
+    mut tlbl := str_trim(str_substr(str_trim(bparts[1]), 6, str_len(str_trim(bparts[1])) - 6))
+    mut flbl := str_trim(str_substr(str_trim(bparts[2]), 6, str_len(str_trim(bparts[2])) - 6))
+    if str_starts_with(tlbl, "%"):
+        tlbl = str_substr(tlbl, 1, str_len(tlbl) - 1)
+    if str_starts_with(flbl, "%"):
+        flbl = str_substr(flbl, 1, str_len(flbl) - 1)
+    tbb := map_get(label_to_bb, tlbl)
+    fbb := map_get(label_to_bb, flbl)
+    fputs(str_concat(ind, str_concat("if ", str_concat(cond, ":\n"))), fp)
+    ll_emit_edge_phis(bbi, tbb, edge_phi_map, edge_phi_lists, str_concat(ind, "    "), fp)
+    fputs(str_concat(ind, str_concat("    _bb = ", str_concat(int_to_str(tbb), "\n"))), fp)
+    fputs(str_concat(ind, "    continue\n"), fp)
+    fputs(str_concat(ind, "else:\n"), fp)
+    ll_emit_edge_phis(bbi, fbb, edge_phi_map, edge_phi_lists, str_concat(ind, "    "), fp)
+    fputs(str_concat(ind, str_concat("    _bb = ", str_concat(int_to_str(fbb), "\n"))), fp)
+    fputs(str_concat(ind, "    continue\n"), fp)
+    return ni + 1
+
+def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str], bb_starts: List[Int], bb_ends: List[Int], label_to_bb: Map[Str, Int], alloca_offs: Map[Str, Int], edge_phi_map: Map[Str, Int], edge_phi_lists: List[List[Str]], cross_bb: Map[Str, Int], frame_size: Int, ret_lpp: Str, ind: Str, fp: RawPtr):
     mut idx := bb_starts[bbi]
     end_idx := bb_ends[bbi]
     mut emitted_in_bb := 0
@@ -557,7 +614,7 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
         if str_starts_with(s, "ret "):
             ret_rest := str_trim(str_substr(s, 4, str_len(s) - 4))
             if frame_size > 0:
-                fputs(str_concat(ind, "_sp_free(_sp)\n"), fp)
+                fputs(str_concat(ind, "lpp_global_slot_set(1, _sp)\n"), fp)
             if ret_rest == "void":
                 fputs(str_concat(ind, "return\n"), fp)
             else:
@@ -568,7 +625,7 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
 
         if s == "unreachable":
             if frame_size > 0:
-                fputs(str_concat(ind, "_sp_free(_sp)\n"), fp)
+                fputs(str_concat(ind, "lpp_global_slot_set(1, _sp)\n"), fp)
             if ret_lpp == "Void":
                 fputs(str_concat(ind, "return\n"), fp)
             elif ret_lpp == "Float":
@@ -680,26 +737,26 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 if psp > 0 && (str_starts_with(p_raw, "%") || str_starts_with(p_raw, "@")):
                     p_raw = str_substr(p_raw, 0, psp)
                 sptr := ll_resolve_operand(m, pv[0], p_raw)
-                st_safe := ll_is_statically_safe_ptr(m, sptr, p_raw, ll_access_size(sty), frame_size, checked_ptrs, known_stack_off, known_global_off)
-                mut st_pfx := "_st"
+                st_sz := ll_access_size(sty)
+                st_safe := ll_is_statically_safe_ptr(m, sptr, p_raw, st_sz, frame_size, checked_ptrs, known_stack_off, known_global_off)
                 if !st_safe:
-                    st_pfx = "_sst"
+                    fputs(str_concat(ind, str_concat("_chk(", str_concat(sptr, str_concat(", ", str_concat(int_to_str(st_sz), ")\n"))))), fp)
                 if sty == "i1" || sty == "i8":
-                    fputs(str_concat(ind, str_concat(st_pfx, str_concat("8(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n")))))), fp)
+                    fputs(str_concat(ind, str_concat("ptr_write[U8]((", str_concat(sptr, str_concat(") as Ptr[U8], ((", str_concat(sval, ") & 255) as U8)\n"))))), fp)
                 elif sty == "i16":
-                    fputs(str_concat(ind, str_concat(st_pfx, str_concat("16(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n")))))), fp)
+                    fputs(str_concat(ind, str_concat("ptr_write[U16]((", str_concat(sptr, str_concat(") as Ptr[U16], ((", str_concat(sval, ") & 65535) as U16)\n"))))), fp)
                 elif sty == "i32":
-                    fputs(str_concat(ind, str_concat(st_pfx, str_concat("32(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n")))))), fp)
+                    fputs(str_concat(ind, str_concat("ptr_write[U32]((", str_concat(sptr, str_concat(") as Ptr[U32], ((", str_concat(sval, ") & 4294967295) as U32)\n"))))), fp)
                 elif sty == "float":
-                    fputs(str_concat(ind, str_concat(st_pfx, str_concat("f32(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n")))))), fp)
+                    fputs(str_concat(ind, str_concat("_stf32(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n"))))), fp)
                 elif sty == "double":
-                    fputs(str_concat(ind, str_concat(st_pfx, str_concat("f64(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n")))))), fp)
+                    fputs(str_concat(ind, str_concat("ptr_write[Float]((", str_concat(sptr, str_concat(") as Ptr[Float], ", str_concat(sval, ")\n"))))), fp)
                 else:
-                    fputs(str_concat(ind, str_concat(st_pfx, str_concat("64(", str_concat(sptr, str_concat(", ", str_concat(sval, ")\n")))))), fp)
+                    fputs(str_concat(ind, str_concat("ptr_write[Int]((", str_concat(sptr, str_concat(") as Ptr[Int], ", str_concat(sval, ")\n"))))), fp)
             continue
 
         # --- Void Call ---
-        if str_starts_with(s, "call ") || str_starts_with(s, "tail call "):
+        if str_starts_with(s, "call ") || str_starts_with(s, "tail call ") || str_starts_with(s, "musttail call ") || str_starts_with(s, "notail call "):
             ll_emit_call_stmt(m, "", s, ind, fp)
             checked_ptrs = map_new()
             continue
@@ -741,30 +798,31 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                     if psp > 0 && (str_starts_with(p_raw, "%") || str_starts_with(p_raw, "@")):
                         p_raw = str_substr(p_raw, 0, psp)
                     lptr := ll_resolve_operand(m, pv[0], p_raw)
-                    ld_safe := ll_is_statically_safe_ptr(m, lptr, p_raw, ll_access_size(lty), frame_size, checked_ptrs, known_stack_off, known_global_off)
-                    mut ld_pfx := "_ld"
+                    ld_sz := ll_access_size(lty)
+                    ld_safe := ll_is_statically_safe_ptr(m, lptr, p_raw, ld_sz, frame_size, checked_ptrs, known_stack_off, known_global_off)
                     if !ld_safe:
-                        ld_pfx = "_sld"
+                        fputs(str_concat(ind, str_concat("_chk(", str_concat(lptr, str_concat(", ", str_concat(int_to_str(ld_sz), ")\n"))))), fp)
                     if lty == "i1":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("8(", str_concat(lptr, ") & 1\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = (ptr_read[U8]((", str_concat(lptr, ") as Ptr[U8]) as Int) & 1\n")))), fp)
                     elif lty == "i8":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("8(", str_concat(lptr, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ptr_read[U8]((", str_concat(lptr, ") as Ptr[U8]) as Int\n")))), fp)
                     elif lty == "i16":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("16(", str_concat(lptr, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ptr_read[U16]((", str_concat(lptr, ") as Ptr[U16]) as Int\n")))), fp)
                     elif lty == "i32":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("32(", str_concat(lptr, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ptr_read[U32]((", str_concat(lptr, ") as Ptr[U32]) as Int\n")))), fp)
                     elif lty == "float":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("f32(", str_concat(lptr, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = _ldf32(", str_concat(lptr, ")\n")))), fp)
                     elif lty == "double":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("f64(", str_concat(lptr, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ptr_read[Float]((", str_concat(lptr, ") as Ptr[Float])\n")))), fp)
                     else:
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ld_pfx, str_concat("64(", str_concat(lptr, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ptr_read[Int]((", str_concat(lptr, ") as Ptr[Int])\n")))), fp)
                 continue
 
             if str_starts_with(rhs, "getelementptr "):
                 mut grest := str_trim(str_substr(rhs, 14, str_len(rhs) - 14))
-                if str_starts_with(grest, "inbounds "):
-                    grest = str_trim(str_substr(grest, 9, str_len(grest) - 9))
+                while str_starts_with(grest, "inbounds ") || str_starts_with(grest, "nuw ") || str_starts_with(grest, "nusw "):
+                    gsp := str_find(grest, " ")
+                    grest = str_trim(str_substr(grest, gsp + 1, str_len(grest) - gsp - 1))
                 gparts := ll_split_top_level(grest)
                 if len(gparts) >= 2:
                     mut cur_ty := str_trim(gparts[0])
@@ -782,8 +840,8 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                         elif str_starts_with(pv[1], "%") && map_has(known_stack_off, pv[1]):
                             base_kind = 1
                             const_acc = map_get(known_stack_off, pv[1])
-                        elif str_starts_with(addr_expr, "(_gbase() + ") && str_ends_with(addr_expr, ")") && !str_contains(addr_expr, "*"):
-                            ns := str_substr(addr_expr, 12, str_len(addr_expr) - 13)
+                        elif str_starts_with(addr_expr, "(_gb + ") && str_ends_with(addr_expr, ")") && !str_contains(addr_expr, "*"):
+                            ns := str_substr(addr_expr, 7, str_len(addr_expr) - 8)
                             if !str_contains(ns, "(") && !str_contains(ns, " "):
                                 base_kind = 2
                                 const_acc = str_to_int(ns)
@@ -838,13 +896,15 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                     fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(addr_expr, "\n")))), fp)
                 continue
 
-            if str_starts_with(rhs, "call ") || str_starts_with(rhs, "tail call "):
+            if str_starts_with(rhs, "call ") || str_starts_with(rhs, "tail call ") || str_starts_with(rhs, "musttail call ") || str_starts_with(rhs, "notail call "):
                 ll_emit_call_stmt(m, lhs, rhs, ind, fp)
                 checked_ptrs = map_new()
                 continue
 
             if str_starts_with(rhs, "icmp "):
-                irest := str_trim(str_substr(rhs, 5, str_len(rhs) - 5))
+                mut irest := str_trim(str_substr(rhs, 5, str_len(rhs) - 5))
+                if str_starts_with(irest, "samesign "):
+                    irest = str_trim(str_substr(irest, 9, str_len(irest) - 9))
                 sp := str_find(irest, " ")
                 pred := str_substr(irest, 0, sp)
                 after_p := str_trim(str_substr(irest, sp + 1, str_len(irest) - sp - 1))
@@ -868,13 +928,17 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                     elif pred == "sge":
                         cond = str_concat("(", str_concat(ll_sign_ext_expr(ity, a_raw), str_concat(") >= (", str_concat(ll_sign_ext_expr(ity, b_raw), ")"))))
                     elif pred == "ult":
-                        cond = str_concat("_ult64(", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(", ", str_concat(ll_zero_ext_expr(ity, b_raw), ") != 0"))))
+                        cond = str_concat("((", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(") as U64) < ((", str_concat(ll_zero_ext_expr(ity, b_raw), ") as U64)"))))
                     elif pred == "ule":
-                        cond = str_concat("_ule64(", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(", ", str_concat(ll_zero_ext_expr(ity, b_raw), ") != 0"))))
+                        cond = str_concat("((", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(") as U64) <= ((", str_concat(ll_zero_ext_expr(ity, b_raw), ") as U64)"))))
                     elif pred == "ugt":
-                        cond = str_concat("_ugt64(", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(", ", str_concat(ll_zero_ext_expr(ity, b_raw), ") != 0"))))
+                        cond = str_concat("((", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(") as U64) > ((", str_concat(ll_zero_ext_expr(ity, b_raw), ") as U64)"))))
                     else:
-                        cond = str_concat("_uge64(", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(", ", str_concat(ll_zero_ext_expr(ity, b_raw), ") != 0"))))
+                        cond = str_concat("((", str_concat(ll_zero_ext_expr(ity, a_raw), str_concat(") as U64) >= ((", str_concat(ll_zero_ext_expr(ity, b_raw), ") as U64)"))))
+                    fused_idx := ll_try_fuse_cmp_br(bbi, str_trim(str_substr(s, 0, eq)), raw_lhs, cond, idx, end_idx, body_lines, label_to_bb, edge_phi_map, edge_phi_lists, cross_bb, ind, fp)
+                    if fused_idx >= 0:
+                        idx = fused_idx
+                        continue
                     fputs(str_concat(ind, str_concat("if ", str_concat(cond, ":\n"))), fp)
                     fputs(str_concat(ind, str_concat("    ", str_concat(lhs, " = 1\n"))), fp)
                     fputs(str_concat(ind, "else:\n"), fp)
@@ -882,7 +946,10 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 continue
 
             if str_starts_with(rhs, "fcmp "):
-                frest := str_trim(str_substr(rhs, 5, str_len(rhs) - 5))
+                mut frest := str_trim(str_substr(rhs, 5, str_len(rhs) - 5))
+                while str_starts_with(frest, "fast ") || str_starts_with(frest, "nnan ") || str_starts_with(frest, "ninf ") || str_starts_with(frest, "nsz ") || str_starts_with(frest, "arcp ") || str_starts_with(frest, "contract ") || str_starts_with(frest, "afn ") || str_starts_with(frest, "reassoc "):
+                    fsp := str_find(frest, " ")
+                    frest = str_trim(str_substr(frest, fsp + 1, str_len(frest) - fsp - 1))
                 sp := str_find(frest, " ")
                 pred := str_substr(frest, 0, sp)
                 after_p := str_trim(str_substr(frest, sp + 1, str_len(frest) - sp - 1))
@@ -905,7 +972,12 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                         op_s = ">"
                     elif pred == "oge" || pred == "uge":
                         op_s = ">="
-                    fputs(str_concat(ind, str_concat("if (", str_concat(a_e, str_concat(") ", str_concat(op_s, str_concat(" (", str_concat(b_e, "):\n"))))))), fp)
+                    fcond := str_concat("(", str_concat(a_e, str_concat(") ", str_concat(op_s, str_concat(" (", str_concat(b_e, ")"))))))
+                    fused_idx := ll_try_fuse_cmp_br(bbi, str_trim(str_substr(s, 0, eq)), raw_lhs, fcond, idx, end_idx, body_lines, label_to_bb, edge_phi_map, edge_phi_lists, cross_bb, ind, fp)
+                    if fused_idx >= 0:
+                        idx = fused_idx
+                        continue
+                    fputs(str_concat(ind, str_concat("if ", str_concat(fcond, ":\n"))), fp)
                     fputs(str_concat(ind, str_concat("    ", str_concat(lhs, " = 1\n"))), fp)
                     fputs(str_concat(ind, "else:\n"), fp)
                     fputs(str_concat(ind, str_concat("    ", str_concat(lhs, " = 0\n"))), fp)
@@ -931,8 +1003,9 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 sp := str_find(rhs, " ")
                 op := str_substr(rhs, 0, sp)
                 mut crest := str_trim(str_substr(rhs, sp + 1, str_len(rhs) - sp - 1))
-                if str_starts_with(crest, "nneg "):
-                    crest = str_trim(str_substr(crest, 5, str_len(crest) - 5))
+                while str_starts_with(crest, "nneg ") || str_starts_with(crest, "nuw ") || str_starts_with(crest, "nsw "):
+                    csp := str_find(crest, " ")
+                    crest = str_trim(str_substr(crest, csp + 1, str_len(crest) - csp - 1))
                 to_pos := str_find(crest, " to ")
                 if to_pos > 0:
                     src_part := str_trim(str_substr(crest, 0, to_pos))
@@ -966,17 +1039,27 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 continue
 
             if str_starts_with(rhs, "fneg "):
-                frest := str_trim(str_substr(rhs, 5, str_len(rhs) - 5))
+                mut frest := str_trim(str_substr(rhs, 5, str_len(rhs) - 5))
+                while str_starts_with(frest, "fast ") || str_starts_with(frest, "nnan ") || str_starts_with(frest, "ninf ") || str_starts_with(frest, "nsz ") || str_starts_with(frest, "arcp ") || str_starts_with(frest, "contract ") || str_starts_with(frest, "afn ") || str_starts_with(frest, "reassoc "):
+                    fsp := str_find(frest, " ")
+                    frest = str_trim(str_substr(frest, fsp + 1, str_len(frest) - fsp - 1))
                 fv := ll_split_type_and_val(frest)
                 fe := ll_resolve_operand(m, fv[0], fv[1])
                 fputs(str_concat(ind, str_concat(lhs, str_concat(" = -(", str_concat(fe, ")\n")))), fp)
+                continue
+
+            if str_starts_with(rhs, "freeze "):
+                frest := str_trim(str_substr(rhs, 7, str_len(rhs) - 7))
+                fv := ll_split_type_and_val(frest)
+                fe := ll_resolve_operand(m, fv[0], fv[1])
+                fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(fe, "\n")))), fp)
                 continue
 
             sp := str_find(rhs, " ")
             if sp > 0:
                 op := str_substr(rhs, 0, sp)
                 mut brest := str_trim(str_substr(rhs, sp + 1, str_len(rhs) - sp - 1))
-                while str_starts_with(brest, "nuw ") || str_starts_with(brest, "nsw ") || str_starts_with(brest, "exact ") || str_starts_with(brest, "disjoint "):
+                while str_starts_with(brest, "nuw ") || str_starts_with(brest, "nsw ") || str_starts_with(brest, "exact ") || str_starts_with(brest, "disjoint ") || str_starts_with(brest, "fast ") || str_starts_with(brest, "nnan ") || str_starts_with(brest, "ninf ") || str_starts_with(brest, "nsz ") || str_starts_with(brest, "arcp ") || str_starts_with(brest, "contract ") || str_starts_with(brest, "afn ") || str_starts_with(brest, "reassoc "):
                     sp2 := str_find(brest, " ")
                     brest = str_trim(str_substr(brest, sp2 + 1, str_len(brest) - sp2 - 1))
                 bparts := ll_split_top_level(brest)
@@ -1007,12 +1090,12 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                         if m.safety_mode:
                             fputs(str_concat(ind, str_concat(lhs, str_concat(" = _safe_udiv64(", str_concat(ll_zero_ext_expr(bty, ae), str_concat(", ", str_concat(ll_zero_ext_expr(bty, be), ")\n")))))), fp)
                         else:
-                            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _udiv64(", str_concat(ll_zero_ext_expr(bty, ae), str_concat(", ", str_concat(ll_zero_ext_expr(bty, be), ")\n")))))), fp)
+                            fputs(str_concat(ind, str_concat(lhs, str_concat(" = (((", str_concat(ll_zero_ext_expr(bty, ae), str_concat(") as U64) / ((", str_concat(ll_zero_ext_expr(bty, be), ") as U64)) as Int\n")))))), fp)
                     elif op == "urem":
                         if m.safety_mode:
                             fputs(str_concat(ind, str_concat(lhs, str_concat(" = _safe_urem64(", str_concat(ll_zero_ext_expr(bty, ae), str_concat(", ", str_concat(ll_zero_ext_expr(bty, be), ")\n")))))), fp)
                         else:
-                            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _urem64(", str_concat(ll_zero_ext_expr(bty, ae), str_concat(", ", str_concat(ll_zero_ext_expr(bty, be), ")\n")))))), fp)
+                            fputs(str_concat(ind, str_concat(lhs, str_concat(" = (((", str_concat(ll_zero_ext_expr(bty, ae), str_concat(") as U64) % ((", str_concat(ll_zero_ext_expr(bty, be), ") as U64)) as Int\n")))))), fp)
                     elif op == "and":
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = (", str_concat(ae, str_concat(") & (", str_concat(be, ")\n")))))), fp)
                     elif op == "or":
@@ -1024,20 +1107,20 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                     elif op == "ashr":
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = (", str_concat(ll_sign_ext_expr(bty, ae), str_concat(") >> ((", str_concat(be, ") & 63)\n")))))), fp)
                     elif op == "lshr":
-                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = _lshr64(", str_concat(ll_zero_ext_expr(bty, ae), str_concat(", ", str_concat(be, ")\n")))))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = (((", str_concat(ll_zero_ext_expr(bty, ae), str_concat(") as U64) >> ((((", str_concat(be, ") & 63) as U64))) as Int\n")))))), fp)
 
     if emitted_in_bb == 0 && num_bbs > 1:
         fputs(str_concat(ind, "break\n"), fp)
 
-def ll_emit_bb_tree(m: LLModule, lo: Int, hi: Int, num_bbs: Int, body_lines: List[Str], bb_starts: List[Int], bb_ends: List[Int], label_to_bb: Map[Str, Int], alloca_offs: Map[Str, Int], edge_phi_map: Map[Str, Int], edge_phi_lists: List[List[Str]], frame_size: Int, ret_lpp: Str, ind: Str, fp: RawPtr):
+def ll_emit_bb_tree(m: LLModule, lo: Int, hi: Int, num_bbs: Int, body_lines: List[Str], bb_starts: List[Int], bb_ends: List[Int], label_to_bb: Map[Str, Int], alloca_offs: Map[Str, Int], edge_phi_map: Map[Str, Int], edge_phi_lists: List[List[Str]], cross_bb: Map[Str, Int], frame_size: Int, ret_lpp: Str, ind: Str, fp: RawPtr):
     if lo == hi:
-        ll_emit_single_bb(m, lo, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, frame_size, ret_lpp, ind, fp)
+        ll_emit_single_bb(m, lo, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, cross_bb, frame_size, ret_lpp, ind, fp)
         return
     mid := (lo + hi) / 2
     fputs(str_concat(ind, str_concat("if _bb <= ", str_concat(int_to_str(mid), ":\n"))), fp)
-    ll_emit_bb_tree(m, lo, mid, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, frame_size, ret_lpp, str_concat(ind, "    "), fp)
+    ll_emit_bb_tree(m, lo, mid, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, cross_bb, frame_size, ret_lpp, str_concat(ind, "    "), fp)
     fputs(str_concat(ind, "else:\n"), fp)
-    ll_emit_bb_tree(m, mid + 1, hi, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, frame_size, ret_lpp, str_concat(ind, "    "), fp)
+    ll_emit_bb_tree(m, mid + 1, hi, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, cross_bb, frame_size, ret_lpp, str_concat(ind, "    "), fp)
 
 # --- Function body emitter ---
 
@@ -1084,7 +1167,7 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
     mut def_hdr := str_concat("def ", str_concat(lpp_name, str_concat("(", str_concat(str_join(param_decls, ", "), ")"))))
     if ret_lpp != "Void":
         def_hdr = str_concat(def_hdr, str_concat(" -> ", ret_lpp))
-    def_hdr = str_concat(def_hdr, ":\n")
+    def_hdr = str_concat(def_hdr, ":\n    unsafe:\n")
     fputs(def_hdr, fp)
 
     # Pass A: Split body_lines into basic blocks
@@ -1116,6 +1199,7 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
     mut cross_bb := map_new()
     mut alloca_offs := map_new()
     mut frame_size := 0
+    mut uses_gb := false
 
     mut bbi := 0
     while bbi < num_bbs:
@@ -1126,6 +1210,8 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
             if str_len(s) == 0:
                 idx = idx + 1
                 continue
+            if !uses_gb && ll_line_uses_global(m, s):
+                uses_gb = true
             eq := str_find(s, " = ")
             if eq > 0 && str_starts_with(s, "%"):
                 lhs := ll_ssa_var(str_substr(s, 0, eq))
@@ -1135,9 +1221,9 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
                     map_put(def_bb, lhs, bbi)
                     list_push(all_vars, str_concat(lhs, ""))
                     list_push(all_var_bbs, bbi)
-                if str_starts_with(rhs, "load double,") || str_starts_with(rhs, "load float,") || str_starts_with(rhs, "load volatile double,") || str_starts_with(rhs, "load volatile float,") || str_starts_with(rhs, "fadd ") || str_starts_with(rhs, "fsub ") || str_starts_with(rhs, "fmul ") || str_starts_with(rhs, "fdiv ") || str_starts_with(rhs, "fneg ") || str_starts_with(rhs, "sitofp ") || str_starts_with(rhs, "uitofp ") || str_starts_with(rhs, "fpext ") || str_starts_with(rhs, "fptrunc ") || str_starts_with(rhs, "phi double ") || str_starts_with(rhs, "phi float ") || (str_starts_with(rhs, "select i1 ") && (str_contains(rhs, ", double ") || str_contains(rhs, ", float "))):
+                if str_starts_with(rhs, "load double,") || str_starts_with(rhs, "load float,") || str_starts_with(rhs, "load volatile double,") || str_starts_with(rhs, "load volatile float,") || str_starts_with(rhs, "fadd ") || str_starts_with(rhs, "fsub ") || str_starts_with(rhs, "fmul ") || str_starts_with(rhs, "fdiv ") || str_starts_with(rhs, "fneg ") || str_starts_with(rhs, "sitofp ") || str_starts_with(rhs, "uitofp ") || str_starts_with(rhs, "fpext ") || str_starts_with(rhs, "fptrunc ") || str_starts_with(rhs, "phi double ") || str_starts_with(rhs, "phi float ") || str_starts_with(rhs, "freeze double ") || str_starts_with(rhs, "freeze float ") || (str_starts_with(rhs, "bitcast ") && (str_ends_with(rhs, " to double") || str_ends_with(rhs, " to float"))) || (str_starts_with(rhs, "select ") && (str_contains(rhs, ", double ") || str_contains(rhs, ", float "))):
                     map_put(var_is_float, lhs, 1)
-                elif str_starts_with(rhs, "call ") || str_starts_with(rhs, "tail call "):
+                elif str_starts_with(rhs, "call ") || str_starts_with(rhs, "tail call ") || str_starts_with(rhs, "musttail call ") || str_starts_with(rhs, "notail call "):
                     cpos := str_find(rhs, "call ")
                     after_call := ll_strip_attrs(str_substr(rhs, cpos + 5, str_len(rhs) - cpos - 5))
                     if str_starts_with(after_call, "double ") || str_starts_with(after_call, "float "):
@@ -1265,40 +1351,45 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
             idx = idx + 1
         bbi = bbi + 1
 
-    # Allocate shadow stack frame if needed
+    # Cache global base once per function if referenced
+    if uses_gb:
+        fputs("        _gb := lpp_global_slot_get(0)\n", fp)
+
+    # Allocate shadow stack frame if needed (inline to avoid C call overhead)
     frame_size = ll_align_up(frame_size, 16)
     if frame_size > 0:
-        fputs(str_concat("    _sp := _sp_alloc(", str_concat(int_to_str(frame_size), ")\n")), fp)
+        fputs("        _sp := lpp_global_slot_get(1)\n", fp)
+        fputs(str_concat("        lpp_global_slot_set(1, _sp + ", str_concat(int_to_str(frame_size), ")\n")), fp)
 
     # Declare only cross-BB vars + pooled block-local temps (_ti0.._ti{max_ti-1}, _tf0.._tf{max_tf-1})
     vi = 0
     while vi < len(cross_vars):
         vn := cross_vars[vi]
         if map_has(var_is_float, vn):
-            fputs(str_concat("    mut ", str_concat(vn, ": Float = 0.0\n")), fp)
+            fputs(str_concat("        mut ", str_concat(vn, ": Float = 0.0\n")), fp)
         else:
-            fputs(str_concat("    mut ", str_concat(vn, ": Int = 0\n")), fp)
+            fputs(str_concat("        mut ", str_concat(vn, ": Int = 0\n")), fp)
         vi = vi + 1
     mut ti := 0
     while ti < max_ti:
-        fputs(str_concat("    mut _ti", str_concat(int_to_str(ti), ": Int = 0\n")), fp)
+        fputs(str_concat("        mut _ti", str_concat(int_to_str(ti), ": Int = 0\n")), fp)
         ti = ti + 1
     mut tf := 0
     while tf < max_tf:
-        fputs(str_concat("    mut _tf", str_concat(int_to_str(tf), ": Float = 0.0\n")), fp)
+        fputs(str_concat("        mut _tf", str_concat(int_to_str(tf), ": Float = 0.0\n")), fp)
         tf = tf + 1
 
     # Pass C: Emit body (balanced binary tree for multi-block functions!)
     if num_bbs > 1:
-        fputs("    mut _bb := 0\n", fp)
-        fputs("    while true:\n", fp)
-        ll_emit_bb_tree(m, 0, num_bbs - 1, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, frame_size, ret_lpp, "        ", fp)
+        fputs("        mut _bb := 0\n", fp)
+        fputs("        while true:\n", fp)
+        ll_emit_bb_tree(m, 0, num_bbs - 1, num_bbs, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, cross_bb, frame_size, ret_lpp, "            ", fp)
         if ret_lpp == "Int":
-            fputs("    return 0\n", fp)
+            fputs("        return 0\n", fp)
         elif ret_lpp == "Float":
-            fputs("    return 0.0\n", fp)
+            fputs("        return 0.0\n", fp)
     else:
-        ll_emit_single_bb(m, 0, 1, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, frame_size, ret_lpp, "    ", fp)
+        ll_emit_single_bb(m, 0, 1, body_lines, bb_starts, bb_ends, label_to_bb, alloca_offs, edge_phi_map, edge_phi_lists, cross_bb, frame_size, ret_lpp, "        ", fp)
     fputs("\n", fp)
 
 def ll_emit_edge_phis(from_bb: Int, to_bb: Int, edge_phi_map: Map[Str, Int], edge_phi_lists: List[List[Str]], ind: Str, fp: RawPtr):
@@ -1306,9 +1397,23 @@ def ll_emit_edge_phis(from_bb: Int, to_bb: Int, edge_phi_map: Map[Str, Int], edg
     if !map_has(edge_phi_map, ekey):
         return
     elist := edge_phi_lists[map_get(edge_phi_map, ekey)]
+    n_phis := len(elist)
+    if n_phis == 1:
+        fputs(str_concat(ind, str_concat(elist[0], "\n")), fp)
+        return
     mut i := 0
-    while i < len(elist):
-        fputs(str_concat(ind, str_concat(elist[i], "\n")), fp)
+    while i < n_phis:
+        eqp := str_find(elist[i], " = ")
+        if eqp > 0:
+            rhs_e := str_substr(elist[i], eqp + 3, str_len(elist[i]) - eqp - 3)
+            fputs(str_concat(ind, str_concat("_p", str_concat(int_to_str(i), str_concat(" := ", str_concat(rhs_e, "\n"))))), fp)
+        i = i + 1
+    i = 0
+    while i < n_phis:
+        eqp := str_find(elist[i], " = ")
+        if eqp > 0:
+            lhs_v := str_substr(elist[i], 0, eqp)
+            fputs(str_concat(ind, str_concat(lhs_v, str_concat(" = _p", str_concat(int_to_str(i), "\n")))), fp)
         i = i + 1
 
 # Emit a direct, intrinsic, variadic, or indirect call statement
@@ -1385,7 +1490,7 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
     if str_starts_with(callee, "@llvm.va_start"):
         fputs(str_concat(ind, str_concat("_va_init(", str_concat(arg_exprs[0], ", _va)\n"))), fp)
         return
-    if str_starts_with(callee, "@llvm.va_end") || str_starts_with(callee, "@llvm.lifetime.") || str_starts_with(callee, "@llvm.dbg.") || str_starts_with(callee, "@llvm.prefetch."):
+    if str_starts_with(callee, "@llvm.va_end") || str_starts_with(callee, "@llvm.lifetime.") || str_starts_with(callee, "@llvm.dbg.") || str_starts_with(callee, "@llvm.prefetch.") || str_starts_with(callee, "@llvm.assume"):
         return
     if str_starts_with(callee, "@llvm.va_copy"):
         fputs(str_concat(ind, str_concat("memcpy(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ", 24)\n"))))), fp)
@@ -1400,6 +1505,50 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
     if str_starts_with(callee, "@llvm.abs."):
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = abs(", str_concat(ll_sign_ext_expr(arg_tys[0], arg_exprs[0]), ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.smin."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = min(", str_concat(ll_sign_ext_expr(arg_tys[0], arg_exprs[0]), str_concat(", ", str_concat(ll_sign_ext_expr(arg_tys[1], arg_exprs[1]), ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.smax."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = max(", str_concat(ll_sign_ext_expr(arg_tys[0], arg_exprs[0]), str_concat(", ", str_concat(ll_sign_ext_expr(arg_tys[1], arg_exprs[1]), ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.umin."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _umin(", str_concat(ll_zero_ext_expr(arg_tys[0], arg_exprs[0]), str_concat(", ", str_concat(ll_zero_ext_expr(arg_tys[1], arg_exprs[1]), ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.umax."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _umax(", str_concat(ll_zero_ext_expr(arg_tys[0], arg_exprs[0]), str_concat(", ", str_concat(ll_zero_ext_expr(arg_tys[1], arg_exprs[1]), ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.bswap.i16"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _bswap16(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.bswap.i32"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _bswap32(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.bswap.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _bswap64(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.fshl.i32"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _fshl32(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], str_concat(", ", str_concat(arg_exprs[2], ")\n")))))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.fshl.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _fshl64(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], str_concat(", ", str_concat(arg_exprs[2], ")\n")))))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.ctpop."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _ctpop64(", str_concat(ll_zero_ext_expr(arg_tys[0], arg_exprs[0]), ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.load.relative.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _load_rel(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
         return
     if str_starts_with(callee, "@llvm.floor."):
         if str_len(lhs) > 0:

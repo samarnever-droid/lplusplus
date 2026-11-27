@@ -229,16 +229,21 @@ def main():
         return
 
     if first == "--full" && argc >= 3:
-        in_path := args_get(2)
-        mut out_path := str_concat(path_stem(in_path), ".lpp")
+        mut in_path := ""
+        mut out_path := ""
         mut safety := false
+        mut opt_flag := "-O1 -fno-pic -fno-vectorize -fno-slp-vectorize -fno-unroll-loops"
         mut clang_flags := list_new()
-        mut ai := 3
+        mut ai := 2
         while ai < argc:
             a := args_get(ai)
             if a == "-o" && ai + 1 < argc:
                 out_path = args_get(ai + 1)
                 ai = ai + 2
+                continue
+            if a == "--O0":
+                opt_flag = "-O0"
+                ai = ai + 1
                 continue
             if a == "--safety=true" || a == "--safety=True" || a == "--Safety=True":
                 safety = true
@@ -261,11 +266,20 @@ def main():
                         continue
                 ai = ai + 1
                 continue
+            if str_len(in_path) == 0 && !str_starts_with(a, "-"):
+                in_path = a
+                ai = ai + 1
+                continue
             list_push(clang_flags, a)
             ai = ai + 1
+        if str_len(in_path) == 0:
+            print_str("FAIL: --full requires an input C file")
+            exit(1)
+        if str_len(out_path) == 0:
+            out_path = str_concat(path_stem(in_path), ".lpp")
         flags_str := str_join(clang_flags, " ")
         tmp_ll := "/tmp/c2lpp_full_ir.ll"
-        cmd := str_concat("clang -O0 -S -emit-llvm ", str_concat(flags_str, str_concat(" ", str_concat(in_path, str_concat(" -o ", tmp_ll)))))
+        cmd := str_concat("clang ", str_concat(opt_flag, str_concat(" -S -emit-llvm ", str_concat(flags_str, str_concat(" ", str_concat(in_path, str_concat(" -o ", tmp_ll)))))))
         rc := system(cmd)
         if rc != 0:
             print_str("FAIL: clang -S -emit-llvm failed")

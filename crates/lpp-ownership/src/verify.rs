@@ -1470,8 +1470,9 @@ pub fn verify_ownership_plan(
             }
         }
     }
+    let plan_arenas: BTreeSet<MirFunctionId> = plan.arenas.iter().map(|a| a.function).collect();
     for function in expectation.arenas.keys() {
-        if !plan.arenas.iter().any(|arena| &arena.function == function) {
+        if !plan_arenas.contains(function) {
             errors.push(OwnershipPlanError {
                 kind: OwnershipPlanErrorKind::MissingArena {
                     function: *function,

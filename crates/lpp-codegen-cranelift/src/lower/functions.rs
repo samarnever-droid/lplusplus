@@ -1,3 +1,5 @@
+use std::collections::{HashSet, VecDeque};
+
 use super::*;
 
 pub(super) struct FunctionLowerSpec<'a> {
@@ -66,6 +68,9 @@ impl<'m> Lowering<'m> {
             sig.returns.push(AbiParam::new(cl));
         }
 
+        let (reachable, used_locals) =
+            collect_reachable_and_used_cranelift(program, function, &capture_locals);
+
         let mut ctx = self.module.make_context();
         ctx.func.signature = sig;
         ctx.func.name = UserFuncName::user(0, mir_id.raw());
@@ -73,25 +78,31 @@ impl<'m> Lowering<'m> {
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
 
-            // Every MIR local is a cranelift variable. Soundness comes
-            // from the 4B definite-initialization invariant: a
-            // variable is only read where a def dominates.
+            // Every reachable MIR local gets a cranelift variable (with dense
+            // indexing so dead dispatch-tree temps emit zero stack slots).
             let locals = program.function_locals(function);
             let mut local_vars: HashMap<MirLocalId, Variable> = HashMap::new();
-            for (index, &local) in locals.iter().enumerate() {
+            let mut next_var = 0usize;
+            for &local in locals {
+                if !used_locals.contains(&local) {
+                    continue;
+                }
                 let ty = program
                     .local(local)
                     .expect("validated MIR retains locals")
                     .ty;
                 let cl = machine_type(types, ty).unwrap_or(cltypes::I8);
-                let variable = Variable::new(index);
+                let variable = Variable::new(next_var);
+                next_var += 1;
                 builder.declare_var(variable, cl);
                 local_vars.insert(local, variable);
             }
 
             let mut cl_blocks: HashMap<BasicBlockId, Block> = HashMap::new();
             for &block in program.function_blocks(function) {
-                cl_blocks.insert(block, builder.create_block());
+                if reachable.contains(&block) {
+                    cl_blocks.insert(block, builder.create_block());
+                }
             }
 
             let entry = *cl_blocks
@@ -103,7 +114,7 @@ impl<'m> Lowering<'m> {
             let params = program.function_parameters(function);
             let env_var = if is_closure {
                 let env_val = param_vals[0];
-                let variable = Variable::new(locals.len());
+                let variable = Variable::new(next_var);
                 builder.declare_var(variable, cltypes::I64);
                 builder.def_var(variable, env_val);
                 for (i, &local) in capture_locals.iter().enumerate() {
@@ -133,11 +144,14 @@ impl<'m> Lowering<'m> {
                 user_index += 1;
             }
 
-            // Zero-init every non-parameter value local; the 4B
+            // Zero-init only reachable non-parameter value locals; the 4B
             // invariant keeps the reads sound. Non-escaping `Frame` POD
             // structs/tuples sit directly in a sized `StackSlot` (0 B heap,
             // 0 atomics); heap-managed locals zero to null.
             for &local in locals {
+                if !used_locals.contains(&local) {
+                    continue;
+                }
                 if !params.contains(&local) {
                     let variable = *local_vars.get(&local).expect("local variable");
                     if let Some(&stack_bytes) = self.stack_locals.get(&(mir_id, local)) {
@@ -197,7 +211,7 @@ impl<'m> Lowering<'m> {
             // without switching; every other block switches first.
             self.lower_block(&inst, &mut builder, &cl_blocks, function.entry, false)?;
             for &block in blocks {
-                if block == function.entry {
+                if block == function.entry || !reachable.contains(&block) {
                     continue;
                 }
                 self.lower_block(&inst, &mut builder, &cl_blocks, block, true)?;
@@ -455,4 +469,129 @@ impl<'m> Lowering<'m> {
             }
         }
     }
+}
+
+/// Collect blocks reachable from `function.entry` and locals referenced inside them.
+fn collect_reachable_and_used_cranelift(
+    program: &MirProgram,
+    function: &MirFunction,
+    capture_locals: &[MirLocalId],
+) -> (HashSet<BasicBlockId>, HashSet<MirLocalId>) {
+    let mut reachable = HashSet::new();
+    let mut queue = VecDeque::new();
+    reachable.insert(function.entry);
+    queue.push_back(function.entry);
+    while let Some(bb) = queue.pop_front() {
+        let Some(block) = program.block(bb) else {
+            continue;
+        };
+        match block.terminator {
+            Terminator::Goto(t) => {
+                if reachable.insert(t) {
+                    queue.push_back(t);
+                }
+            }
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => {
+                if reachable.insert(then_block) {
+                    queue.push_back(then_block);
+                }
+                if reachable.insert(else_block) {
+                    queue.push_back(else_block);
+                }
+            }
+            Terminator::SwitchEnum { targets, .. } => {
+                for &t in program.switch_targets(targets) {
+                    if reachable.insert(t) {
+                        queue.push_back(t);
+                    }
+                }
+            }
+            Terminator::Return(_) | Terminator::Unreachable => {}
+        }
+    }
+
+    let mut used = HashSet::new();
+    for &p in program.function_parameters(function) {
+        used.insert(p);
+    }
+    for &c in capture_locals {
+        used.insert(c);
+    }
+    let visit_op = |used: &mut HashSet<MirLocalId>, op: Operand| {
+        if let Operand::Copy(l) = op {
+            used.insert(l);
+        }
+    };
+    let visit_place = |used: &mut HashSet<MirLocalId>, place_id| {
+        if let Some(p) = program.place(place_id) {
+            used.insert(p.root);
+            for &proj in program.place_projections(p) {
+                if let PlaceProjection::ListIndex(op) = proj {
+                    visit_op(used, op);
+                }
+            }
+        }
+    };
+    for &bb in &reachable {
+        let Some(block) = program.block(bb) else {
+            continue;
+        };
+        for &inst_id in program.block_instructions(block) {
+            let Some(inst) = program.instruction(inst_id) else {
+                continue;
+            };
+            match inst.kind {
+                InstructionKind::Assign { target, value } => {
+                    used.insert(target);
+                    match value {
+                        Rvalue::Use(op)
+                        | Rvalue::Await(op)
+                        | Rvalue::Spawn(op)
+                        | Rvalue::ListLen(op) => visit_op(&mut used, op),
+                        Rvalue::Unary { operand, .. } | Rvalue::Cast { value: operand, .. } => {
+                            visit_op(&mut used, operand)
+                        }
+                        Rvalue::Binary { left, right, .. } => {
+                            visit_op(&mut used, left);
+                            visit_op(&mut used, right);
+                        }
+                        Rvalue::Load(place) => visit_place(&mut used, place),
+                        Rvalue::Tuple(ops)
+                        | Rvalue::List(ops)
+                        | Rvalue::ConstructStruct { fields: ops, .. }
+                        | Rvalue::ConstructVariant { fields: ops, .. }
+                        | Rvalue::ExternalCall { arguments: ops, .. }
+                        | Rvalue::Builtin { arguments: ops, .. }
+                        | Rvalue::Intrinsic { arguments: ops, .. }
+                        | Rvalue::MakeClosure { captures: ops, .. } => {
+                            for &op in program.operands(ops) {
+                                visit_op(&mut used, op);
+                            }
+                        }
+                        Rvalue::Call { callee, arguments } => {
+                            visit_op(&mut used, callee);
+                            for &op in program.operands(arguments) {
+                                visit_op(&mut used, op);
+                            }
+                        }
+                    }
+                }
+                InstructionKind::Store { place, value } => {
+                    visit_place(&mut used, place);
+                    visit_op(&mut used, value);
+                }
+            }
+        }
+        match block.terminator {
+            Terminator::Branch { condition, .. } => visit_op(&mut used, condition),
+            Terminator::SwitchEnum { subject, .. } => visit_op(&mut used, subject),
+            Terminator::Return(Some(op)) => visit_op(&mut used, op),
+            _ => {}
+        }
+    }
+    (reachable, used)
 }

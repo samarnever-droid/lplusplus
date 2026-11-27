@@ -12,6 +12,7 @@ mod analysis;
 mod branchfold;
 mod constfold;
 mod constprop;
+mod dispatch;
 mod inline;
 
 pub use algebraic::AlgebraicSimplifyPass;
@@ -19,4 +20,5 @@ pub use analysis::{is_primitive_constant, single_def_constants};
 pub use branchfold::BranchFoldPass;
 pub use constfold::{ConstFoldPass, fold_binary, fold_unary};
 pub use constprop::ConstPropPass;
+pub use dispatch::DispatchThreadPass;
 pub use inline::InlinePass;

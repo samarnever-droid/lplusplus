@@ -30,9 +30,11 @@ impl MirPass for BranchFoldPass {
         program: &mut MirProgram,
         _context: &PassContext<'_>,
     ) -> Result<(), PassFailure> {
+        let place_roots: std::collections::BTreeSet<lpp_mir::MirLocalId> =
+            program.places().map(|(_, place)| place.root).collect();
         let function_ids: Vec<MirFunctionId> = program.functions().map(|(id, _)| id).collect();
         for function_id in function_ids {
-            let Some((map, block_ids)) = function_shapes(program, function_id) else {
+            let Some((map, block_ids)) = function_shapes(program, function_id, &place_roots) else {
                 continue;
             };
             for block_id in block_ids {
@@ -73,13 +75,14 @@ impl MirPass for BranchFoldPass {
 fn function_shapes(
     program: &MirProgram,
     function_id: MirFunctionId,
+    place_roots: &std::collections::BTreeSet<lpp_mir::MirLocalId>,
 ) -> Option<(
     std::collections::BTreeMap<lpp_mir::MirLocalId, Constant>,
     Vec<lpp_mir::BasicBlockId>,
 )> {
     let function = program.function(function_id)?;
     Some((
-        crate::passes::analysis::single_def_constants(program, function),
+        crate::passes::analysis::single_def_constants_with_places(program, function, place_roots),
         program.function_blocks(function).to_vec(),
     ))
 }

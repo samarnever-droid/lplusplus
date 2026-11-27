@@ -292,7 +292,8 @@ fn optimization_pipeline_preserves_shape_on_a_gate_program() {
             "const-fold",
             "const-prop",
             "algebraic-simplify",
-            "branch-fold"
+            "branch-fold",
+            "dispatch-thread"
         ]
     );
     assert_eq!(shape(&program), before_shape);

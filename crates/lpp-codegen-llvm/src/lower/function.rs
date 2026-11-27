@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 
 use lpp_codegen_api::layout::tuple_layout;
 use lpp_codegen_api::{CodegenError, NameResolver};
 use lpp_mir::{
     BasicBlockId, BinaryOperator, Constant, InstructionKind, MirFunction, MirFunctionId,
-    MirFunctionKind, MirLocalId, MirLocalKind, MirProgram, MirStringId, Operand, Rvalue,
-    Terminator, UnaryOperator,
+    MirFunctionKind, MirLocalId, MirLocalKind, MirProgram, MirStringId, Operand, PlaceProjection,
+    Rvalue, Terminator, UnaryOperator,
 };
 use lpp_types::{PrimitiveType, TypeInterner, TypeKind};
 
@@ -325,7 +325,9 @@ pub(crate) fn emit_function(
         cur_dbg: dbg_pair.map(|(_, d)| d),
     };
 
-    // Allocate every non-Void local in prologue
+    let (reachable, used_locals) = collect_reachable_and_used(program, function, &capture_locals);
+
+    // Allocate only reachable locals in prologue
     let _ = writeln!(ctx.prologue, "prologue:");
     if is_closure {
         let env_alloca = ctx.fresh();
@@ -335,6 +337,9 @@ pub(crate) fn emit_function(
     }
 
     for &local in program.function_locals(function) {
+        if !used_locals.contains(&local) {
+            continue;
+        }
         let desc = program.local(local).expect("local");
         if is_void_type(types, desc.ty) {
             continue;
@@ -411,6 +416,9 @@ pub(crate) fn emit_function(
     let _ = writeln!(ctx.body, "  br label %{entry_lbl}");
 
     for &block_id in program.function_blocks(function) {
+        if !reachable.contains(&block_id) {
+            continue;
+        }
         let block = program.block(block_id).expect("block");
         ctx.start_label(&format!("bb{}", block_id.raw()));
         for &inst_id in program.block_instructions(block) {
@@ -431,6 +439,132 @@ pub(crate) fn emit_function(
 
     let _ = writeln!(out, "{}{}}}", ctx.prologue, ctx.body);
     Ok(())
+}
+
+/// Collect blocks reachable from `function.entry` and all locals referenced by
+/// those reachable blocks (plus parameters and captures).
+fn collect_reachable_and_used(
+    program: &MirProgram,
+    function: &MirFunction,
+    capture_locals: &[MirLocalId],
+) -> (HashSet<BasicBlockId>, HashSet<MirLocalId>) {
+    let mut reachable = HashSet::new();
+    let mut queue = VecDeque::new();
+    reachable.insert(function.entry);
+    queue.push_back(function.entry);
+    while let Some(bb) = queue.pop_front() {
+        let Some(block) = program.block(bb) else {
+            continue;
+        };
+        match block.terminator {
+            Terminator::Goto(t) => {
+                if reachable.insert(t) {
+                    queue.push_back(t);
+                }
+            }
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => {
+                if reachable.insert(then_block) {
+                    queue.push_back(then_block);
+                }
+                if reachable.insert(else_block) {
+                    queue.push_back(else_block);
+                }
+            }
+            Terminator::SwitchEnum { targets, .. } => {
+                for &t in program.switch_targets(targets) {
+                    if reachable.insert(t) {
+                        queue.push_back(t);
+                    }
+                }
+            }
+            Terminator::Return(_) | Terminator::Unreachable => {}
+        }
+    }
+
+    let mut used = HashSet::new();
+    for &p in program.function_parameters(function) {
+        used.insert(p);
+    }
+    for &c in capture_locals {
+        used.insert(c);
+    }
+    let visit_op = |used: &mut HashSet<MirLocalId>, op: Operand| {
+        if let Operand::Copy(l) = op {
+            used.insert(l);
+        }
+    };
+    let visit_place = |used: &mut HashSet<MirLocalId>, place_id| {
+        if let Some(p) = program.place(place_id) {
+            used.insert(p.root);
+            for &proj in program.place_projections(p) {
+                if let PlaceProjection::ListIndex(op) = proj {
+                    visit_op(used, op);
+                }
+            }
+        }
+    };
+    for &bb in &reachable {
+        let Some(block) = program.block(bb) else {
+            continue;
+        };
+        for &inst_id in program.block_instructions(block) {
+            let Some(inst) = program.instruction(inst_id) else {
+                continue;
+            };
+            match inst.kind {
+                InstructionKind::Assign { target, value } => {
+                    used.insert(target);
+                    match value {
+                        Rvalue::Use(op)
+                        | Rvalue::Await(op)
+                        | Rvalue::Spawn(op)
+                        | Rvalue::ListLen(op) => visit_op(&mut used, op),
+                        Rvalue::Unary { operand, .. } | Rvalue::Cast { value: operand, .. } => {
+                            visit_op(&mut used, operand)
+                        }
+                        Rvalue::Binary { left, right, .. } => {
+                            visit_op(&mut used, left);
+                            visit_op(&mut used, right);
+                        }
+                        Rvalue::Load(place) => visit_place(&mut used, place),
+                        Rvalue::Tuple(ops)
+                        | Rvalue::List(ops)
+                        | Rvalue::ConstructStruct { fields: ops, .. }
+                        | Rvalue::ConstructVariant { fields: ops, .. }
+                        | Rvalue::ExternalCall { arguments: ops, .. }
+                        | Rvalue::Builtin { arguments: ops, .. }
+                        | Rvalue::Intrinsic { arguments: ops, .. }
+                        | Rvalue::MakeClosure { captures: ops, .. } => {
+                            for &op in program.operands(ops) {
+                                visit_op(&mut used, op);
+                            }
+                        }
+                        Rvalue::Call { callee, arguments } => {
+                            visit_op(&mut used, callee);
+                            for &op in program.operands(arguments) {
+                                visit_op(&mut used, op);
+                            }
+                        }
+                    }
+                }
+                InstructionKind::Store { place, value } => {
+                    visit_place(&mut used, place);
+                    visit_op(&mut used, value);
+                }
+            }
+        }
+        match block.terminator {
+            Terminator::Branch { condition, .. } => visit_op(&mut used, condition),
+            Terminator::SwitchEnum { subject, .. } => visit_op(&mut used, subject),
+            Terminator::Return(Some(op)) => visit_op(&mut used, op),
+            _ => {}
+        }
+    }
+    (reachable, used)
 }
 
 impl<'a> FnCtx<'a> {

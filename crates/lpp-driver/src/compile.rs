@@ -627,7 +627,11 @@ fn verify_program(
     types: &lpp_types::TypeInterner,
     stage: &str,
 ) -> Result<(), CompileError> {
+    let t = std::time::Instant::now();
     let errors = verify_mir(program, types);
+    if std::env::var("LPP_PROFILE").is_ok() {
+        eprintln!("[profile]   verify_mir({stage}): {:?}", t.elapsed());
+    }
     if errors.is_empty() {
         Ok(())
     } else {
@@ -640,15 +644,37 @@ fn prove_ownership(
     types: &lpp_types::TypeInterner,
     stage: &str,
 ) -> Result<(), CompileError> {
+    let prof = std::env::var("LPP_PROFILE").is_ok();
+    let t0 = std::time::Instant::now();
     let plan = compute_ownership_plan(program, types)
         .map_err(|error| CompileError::Ownership(format!("{stage}: {error}")))?;
+    if prof {
+        eprintln!(
+            "[profile]   compute_ownership_plan({stage}): {:?}",
+            t0.elapsed()
+        );
+    }
+    let t1 = std::time::Instant::now();
     let plan_errors = verify_ownership_plan(program, types, &plan);
+    if prof {
+        eprintln!(
+            "[profile]   verify_ownership_plan({stage}): {:?}",
+            t1.elapsed()
+        );
+    }
     if !plan_errors.is_empty() {
         return Err(CompileError::Ownership(format!(
             "{stage}: ownership-plan proof failed: {plan_errors:#?}"
         )));
     }
+    let t2 = std::time::Instant::now();
     let balance_errors = verify_ownership_balance(program, types, &plan);
+    if prof {
+        eprintln!(
+            "[profile]   verify_ownership_balance({stage}): {:?}",
+            t2.elapsed()
+        );
+    }
     if !balance_errors.is_empty() {
         return Err(CompileError::Ownership(format!(
             "{stage}: ownership-balance proof failed: {balance_errors:#?}"

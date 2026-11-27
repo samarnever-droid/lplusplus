@@ -24,8 +24,18 @@ pub(super) fn verify_definite_initialization(
     limits: DefiniteInitializationLimits,
 ) -> Vec<MirVerificationError> {
     let mut errors = Vec::new();
+    let mut local_positions = vec![usize::MAX; program.local_count()];
+    let mut block_positions = vec![usize::MAX; program.block_count()];
     for (function_id, function) in program.functions() {
-        analyze_function(program, function_id, function, limits, &mut errors);
+        analyze_function(
+            program,
+            function_id,
+            function,
+            limits,
+            &mut local_positions,
+            &mut block_positions,
+            &mut errors,
+        );
     }
     errors
 }
@@ -35,6 +45,8 @@ fn analyze_function(
     function_id: MirFunctionId,
     function: &crate::MirFunction,
     limits: DefiniteInitializationLimits,
+    local_positions: &mut [usize],
+    block_positions: &mut [usize],
     errors: &mut Vec<MirVerificationError>,
 ) {
     let locals = program.function_locals(function);
@@ -58,11 +70,9 @@ fn analyze_function(
         return;
     }
 
-    let mut local_positions = vec![usize::MAX; program.local_count()];
     for (position, local) in locals.iter().enumerate() {
         local_positions[local.index()] = position;
     }
-    let mut block_positions = vec![usize::MAX; program.block_count()];
     for (position, block) in blocks.iter().enumerate() {
         block_positions[block.index()] = position;
     }
@@ -99,11 +109,40 @@ fn analyze_function(
     let top = DenseBitSet::full(locals.len());
     let mut inputs = vec![top.clone(); blocks.len()];
     let mut outputs = vec![top.clone(); blocks.len()];
+    let mut block_gens: Vec<DenseBitSet> = Vec::with_capacity(blocks.len());
+    for (position, block_id) in blocks.iter().enumerate() {
+        let mut block_gen = DenseBitSet::empty(locals.len());
+        if reachable[position] {
+            let block = program.block(*block_id).unwrap();
+            for instruction_id in program.block_instructions(block) {
+                let instruction = program.instruction(*instruction_id).unwrap();
+                if let InstructionKind::Assign { target, .. } = instruction.kind {
+                    block_gen.insert(local_positions[target.index()]);
+                }
+            }
+        }
+        block_gens.push(block_gen);
+    }
     inputs[entry] = entry_state;
 
-    let mut iterations = 0usize;
-    loop {
-        if iterations >= limits.max_iterations {
+    // Worklist-based fixpoint over reachable blocks (O(E * words) instead of O(B^2 * words)).
+    let mut worklist = VecDeque::with_capacity(blocks.len());
+    let mut in_worklist = vec![false; blocks.len()];
+    let mut reachable_count = 0usize;
+    for position in 0..blocks.len() {
+        if reachable[position] {
+            worklist.push_back(position);
+            in_worklist[position] = true;
+            reachable_count += 1;
+        }
+    }
+    let max_pops = limits.max_iterations.saturating_mul(reachable_count.max(1));
+    let mut pops = 0usize;
+    let mut incoming = DenseBitSet::empty(locals.len());
+    let mut next_output = DenseBitSet::empty(locals.len());
+
+    while let Some(position) = worklist.pop_front() {
+        if pops >= max_pops {
             errors.push(MirVerificationError {
                 function: Some(function_id),
                 block: None,
@@ -111,50 +150,45 @@ fn analyze_function(
                 origin: function.origin,
                 kind: MirVerificationErrorKind::DefiniteInitializationLimit {
                     resource: DefiniteInitializationResource::Iterations,
-                    required: iterations.saturating_add(1),
+                    required: limits.max_iterations.saturating_add(1),
                     limit: limits.max_iterations,
                 },
             });
+            for local in locals {
+                local_positions[local.index()] = usize::MAX;
+            }
+            for block in blocks {
+                block_positions[block.index()] = usize::MAX;
+            }
             return;
         }
-        iterations += 1;
-        let mut changed = false;
-        for position in 0..blocks.len() {
-            if !reachable[position] {
-                continue;
-            }
-            let next_input = if position == entry {
-                inputs[entry].clone()
-            } else {
-                let mut incoming = top.clone();
-                for predecessor in predecessors[position]
-                    .iter()
-                    .copied()
-                    .filter(|predecessor| reachable[*predecessor])
-                {
+        pops += 1;
+        in_worklist[position] = false;
+
+        if position == entry {
+            incoming.copy_from(&inputs[entry]);
+        } else {
+            incoming.copy_from(&top);
+            for &predecessor in &predecessors[position] {
+                if reachable[predecessor] {
                     incoming.intersect_with(&outputs[predecessor]);
                 }
-                incoming
-            };
-            let mut next_output = next_input.clone();
-            let block = program.block(blocks[position]).unwrap();
-            for instruction_id in program.block_instructions(block) {
-                let instruction = program.instruction(*instruction_id).unwrap();
-                if let InstructionKind::Assign { target, .. } = instruction.kind {
-                    next_output.insert(local_positions[target.index()]);
-                }
-            }
-            if inputs[position] != next_input {
-                inputs[position] = next_input;
-                changed = true;
-            }
-            if outputs[position] != next_output {
-                outputs[position] = next_output;
-                changed = true;
             }
         }
-        if !changed {
-            break;
+        next_output.copy_from(&incoming);
+        next_output.union_with(&block_gens[position]);
+
+        if inputs[position] != incoming {
+            inputs[position].copy_from(&incoming);
+        }
+        if outputs[position] != next_output {
+            outputs[position].copy_from(&next_output);
+            for &succ in &successors[position] {
+                if reachable[succ] && !in_worklist[succ] {
+                    in_worklist[succ] = true;
+                    worklist.push_back(succ);
+                }
+            }
         }
     }
 
@@ -175,7 +209,7 @@ fn analyze_function(
                 },
                 instruction_operands(program, instruction.kind),
                 &initialized,
-                &local_positions,
+                local_positions,
                 errors,
             );
             if let InstructionKind::Assign { target, .. } = instruction.kind {
@@ -191,9 +225,16 @@ fn analyze_function(
             },
             terminator_operands(block.terminator),
             &initialized,
-            &local_positions,
+            local_positions,
             errors,
         );
+    }
+
+    for local in locals {
+        local_positions[local.index()] = usize::MAX;
+    }
+    for block in blocks {
+        block_positions[block.index()] = usize::MAX;
     }
 }
 
@@ -345,9 +386,19 @@ impl DenseBitSet {
         self.words[bit / 64] & (1_u64 << (bit % 64)) != 0
     }
 
+    fn copy_from(&mut self, other: &Self) {
+        self.words.copy_from_slice(&other.words);
+    }
+
     fn intersect_with(&mut self, other: &Self) {
         for (word, other) in self.words.iter_mut().zip(&other.words) {
             *word &= *other;
+        }
+    }
+
+    fn union_with(&mut self, other: &Self) {
+        for (word, other) in self.words.iter_mut().zip(&other.words) {
+            *word |= *other;
         }
     }
 }
