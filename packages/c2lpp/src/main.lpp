@@ -10,6 +10,7 @@ import native_types
 import translator
 import c_func_translator
 import clang_ast_translator
+import stream_ast
 
 extern "C":
     def system(cmd: Str) -> Int
@@ -111,6 +112,17 @@ def run_selftest() -> Int:
         print_str("FAIL: CSpan subspan read mismatch")
         return 1
 
+    # 3b. Verify CSpan double (Float) + 8-byte alignment safety
+    fbuf := cspan_alloc_f64(4)
+    cspan_set_f64(fbuf, 0, 3.14159)
+    cspan_set_f64(fbuf, 3, -42.5)
+    fv0 := cspan_get_f64(fbuf, 0)
+    fv3 := cspan_get_f64(fbuf, 3)
+    cspan_free(fbuf)
+    if fv0 < 3.14 || fv0 > 3.15 || fv3 > -42.0 || fv3 < -43.0:
+        print_str("FAIL: CSpan f64/double read mismatch")
+        return 1
+
     # 4. Verify direct native C-to-L++ type mapping (zero Int erasure)
     if c_type_to_native_lpp("int32_t", false) != "I32":
         print_str("FAIL: int32_t mapping")
@@ -154,7 +166,7 @@ def run_selftest() -> Int:
         print_str("FAIL: c2lpp_translate_impl recursive struct translation")
         return 1
 
-    print_str("c2lpp v0.7.0 selftest OK (CSpan=16B, FastHandle=8B, Pure-L++ Clang AST + Auto-Deps + OS Bridge)")
+    print_str("c2lpp v0.8.0 selftest OK (CSpan=16B+f64+align, FastHandle=8B, Pure-L++ Streaming Clang AST + Auto-Deps + OS Bridge)")
     return 0
 
 def run_bench() -> Int:
@@ -223,11 +235,17 @@ def main():
         raw_c := read_file(in_path)
         mut translated := ""
         if rc == 0 && file_exists(tmp_ast) != 0:
-            ast_json := read_file(tmp_ast)
             h_path := path_with_h(in_path)
             mut raw_h := ""
             if str_len(h_path) > 0 && file_exists(h_path) != 0:
                 raw_h = read_file(h_path)
+            # Use constant-memory streaming AST translator for large amalgamations (>16MB AST, e.g. full sqlite3.c)
+            if file_size(tmp_ast) > 16000000 && str_len(out_path) > 0:
+                src_rc := sa_translate_streaming(tmp_ast, path_stem(in_path), raw_c, raw_h, out_path)
+                if src_rc == 0:
+                    print_str(str_concat("wrote ", out_path))
+                    return
+            ast_json := read_file(tmp_ast)
             translated = clang_ast_translate(ast_json, path_stem(in_path), raw_c, raw_h)
             if auto_deps:
                 deps := discover_source_deps(in_path, raw_c, inc_dirs)

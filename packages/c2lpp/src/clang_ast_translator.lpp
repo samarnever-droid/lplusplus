@@ -232,8 +232,12 @@ def cat_callee_name(nodes: List[AstNode], nid: Int) -> Str:
     while cur >= 0 && cur < len(nodes) && guard < 8:
         guard = guard + 1
         nd := nodes[cur]
+        if nd.kind == "MemberExpr" || nd.kind == "ArraySubscriptExpr":
+            return ""
         if nd.kind == "DeclRefExpr":
-            return nd.ref_name
+            if nd.ref_kind == "FunctionDecl":
+                return nd.ref_name
+            return ""
         if len(nd.children) > 0:
             cur = nd.children[0]
         else:
@@ -335,6 +339,23 @@ def cat_eval_sizeof(ty: Str) -> Int:
         return 1
     return 8
 
+def cat_u64_to_i64_str(v: Str) -> Str:
+    n := str_len(v)
+    if n < 19:
+        return v
+    if n == 19 && v <= "9223372036854775807":
+        return v
+    mut acc: Int = 0
+    mut i := 0
+    while i < n:
+        c := ord(char_at(v, i)) - 48
+        if c >= 0 && c <= 9:
+            acc = acc * 10 + c
+        i = i + 1
+    if acc < 0:
+        return str_concat("(", str_concat(int_to_str(acc), ")"))
+    return int_to_str(acc)
+
 def cat_lower_expr(ctx: CatCtx, nid: Int) -> (Str, Str):
     if nid < 0 || nid >= len(ctx.nodes):
         return ("0", "Int")
@@ -358,7 +379,7 @@ def cat_lower_expr(ctx: CatCtx, nid: Int) -> (Str, Str):
     if k == "IntegerLiteral" || k == "CharacterLiteral":
         if str_len(nd.val_str) == 0:
             return ("0", "Int")
-        return (nd.val_str, "Int")
+        return (cat_u64_to_i64_str(nd.val_str), "Int")
 
     if k == "FloatingLiteral":
         mut v := nd.val_str
@@ -633,6 +654,8 @@ def cat_lower_call(ctx: CatCtx, nd: AstNode, nty: Str) -> (Str, Str):
     if len(nd.children) == 0:
         return (cat_default_expr(nty), nty)
     callee := cat_callee_name(ctx.nodes, nd.children[0])
+    if str_len(callee) == 0:
+        return (cat_default_expr(nty), nty)
     nargs := len(nd.children) - 1
 
     # C stdlib -> pure-safe L++ runtime shims
@@ -1181,6 +1204,8 @@ def cat_collect_defines(raw_src: Str, emitted: Map[Str, Int], out_consts: List[S
                 cpos := str_find(raw_v, "/*")
                 if cpos >= 0:
                     raw_v = str_trim(str_substr(raw_v, 0, cpos))
+                if str_ends_with(raw_v, ";"):
+                    raw_v = str_trim(str_substr(raw_v, 0, str_len(raw_v) - 1))
                 mut cval := tr_clean_define_value(raw_v)
                 if str_len(cval) == 0 && str_starts_with(raw_v, "(1 << ") && str_ends_with(raw_v, ")"):
                     sh := str_to_int(str_trim(str_substr(raw_v, 6, str_len(raw_v) - 7)))

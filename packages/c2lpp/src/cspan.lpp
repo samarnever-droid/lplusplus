@@ -56,6 +56,15 @@ def cspan_alloc_i64(count: Int) -> CSpan:
             cspan_trap("C2-OOM")
         return CSpan(raw, (count * 8) as USize)
 
+def cspan_alloc_f64(count: Int) -> CSpan:
+    if count <= 0:
+        return cspan_empty()
+    unsafe:
+        raw := calloc(count as USize, 8 as USize)
+        if ptr_is_null(raw as Ptr[U8]):
+            cspan_trap("C2-OOM")
+        return CSpan(raw, (count * 8) as USize)
+
 def cspan_free(span: CSpan) -> Void:
     unsafe:
         if !ptr_is_null(span.base as Ptr[U8]):
@@ -103,6 +112,8 @@ def cspan_get_i32(span: CSpan, index: Int) -> I32:
     unsafe:
         if ptr_is_null(span.base as Ptr[U8]):
             cspan_trap("C2-NULL-DEREF")
+        if (((span.base as Int) + byte_off) & 3) != 0:
+            cspan_trap("C2-ALIGN-I32")
         p := ptr_offset[I32](span.base as Ptr[I32], index as ISize)
         return ptr_read[I32](p)
 
@@ -113,6 +124,8 @@ def cspan_set_i32(span: CSpan, index: Int, value: I32) -> Void:
     unsafe:
         if ptr_is_null(span.base as Ptr[U8]):
             cspan_trap("C2-NULL-DEREF")
+        if (((span.base as Int) + byte_off) & 3) != 0:
+            cspan_trap("C2-ALIGN-I32")
         p := ptr_offset[I32](span.base as Ptr[I32], index as ISize)
         ptr_write[I32](p, value)
 
@@ -123,6 +136,8 @@ def cspan_get_i64(span: CSpan, index: Int) -> Int:
     unsafe:
         if ptr_is_null(span.base as Ptr[U8]):
             cspan_trap("C2-NULL-DEREF")
+        if (((span.base as Int) + byte_off) & 7) != 0:
+            cspan_trap("C2-ALIGN-I64")
         p := ptr_offset[Int](span.base as Ptr[Int], index as ISize)
         return ptr_read[Int](p)
 
@@ -133,8 +148,34 @@ def cspan_set_i64(span: CSpan, index: Int, value: Int) -> Void:
     unsafe:
         if ptr_is_null(span.base as Ptr[U8]):
             cspan_trap("C2-NULL-DEREF")
+        if (((span.base as Int) + byte_off) & 7) != 0:
+            cspan_trap("C2-ALIGN-I64")
         p := ptr_offset[Int](span.base as Ptr[Int], index as ISize)
         ptr_write[Int](p, value)
+
+def cspan_get_f64(span: CSpan, index: Int) -> Float:
+    byte_off := index * 8
+    if index < 0 || byte_off + 8 > (span.len as Int):
+        cspan_trap("C2-OOB-F64")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        if (((span.base as Int) + byte_off) & 7) != 0:
+            cspan_trap("C2-ALIGN-F64")
+        p := ptr_offset[Float](span.base as Ptr[Float], index as ISize)
+        return ptr_read[Float](p)
+
+def cspan_set_f64(span: CSpan, index: Int, value: Float) -> Void:
+    byte_off := index * 8
+    if index < 0 || byte_off + 8 > (span.len as Int):
+        cspan_trap("C2-OOB-F64")
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]):
+            cspan_trap("C2-NULL-DEREF")
+        if (((span.base as Int) + byte_off) & 7) != 0:
+            cspan_trap("C2-ALIGN-F64")
+        p := ptr_offset[Float](span.base as Ptr[Float], index as ISize)
+        ptr_write[Float](p, value)
 
 def cspan_copy(dst: CSpan, src: CSpan, byte_len: Int) -> Void:
     if byte_len < 0 || byte_len > (dst.len as Int) || byte_len > (src.len as Int):
@@ -213,6 +254,26 @@ def cptr_set_i64(base: Ptr[Int], count: Int, index: Int, value: Int) -> Void:
         cspan_trap("C2-OOB-I64")
     unsafe:
         ptr_write[Int](ptr_offset[Int](base, index as ISize), value)
+
+def cspan_as_f64_ptr(span: CSpan) -> Ptr[Float]:
+    unsafe:
+        if ptr_is_null(span.base as Ptr[U8]) && (span.len as Int) > 0:
+            cspan_trap("C2-NULL-DEREF")
+        if ((span.base as Int) & 7) != 0:
+            cspan_trap("C2-ALIGN-F64")
+        return span.base as Ptr[Float]
+
+def cptr_get_f64(base: Ptr[Float], count: Int, index: Int) -> Float:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-F64")
+    unsafe:
+        return ptr_read[Float](ptr_offset[Float](base, index as ISize))
+
+def cptr_set_f64(base: Ptr[Float], count: Int, index: Int, value: Float) -> Void:
+    if (index as USize) >= (count as USize):
+        cspan_trap("C2-OOB-F64")
+    unsafe:
+        ptr_write[Float](ptr_offset[Float](base, index as ISize), value)
 
 # --- Compact 8-byte packed generation handle (index:32 | generation:32) ---
 # 8x smaller than legacy 64-byte CPtr; fits in a single machine register.

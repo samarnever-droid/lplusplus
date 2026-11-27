@@ -43,7 +43,7 @@ pub(super) fn machine_type(types: &TypeInterner, ty: TypeId) -> Option<CLType> {
         TypeKind::Primitive(PrimitiveType::Char)
         | TypeKind::Primitive(PrimitiveType::U32)
         | TypeKind::Primitive(PrimitiveType::I32) => cltypes::I32,
-        TypeKind::List(_) => cltypes::I64,
+        TypeKind::List(_) | TypeKind::Map { .. } => cltypes::I64,
         // A slice view is a pointer to a (stack-allocated) view record.
         TypeKind::Slice(_) => cltypes::I64,
         TypeKind::Nominal { .. } => cltypes::I64,
@@ -69,6 +69,7 @@ pub(super) fn is_managed(types: &TypeInterner, ty: TypeId) -> bool {
         types.kind(ty),
         TypeKind::Primitive(PrimitiveType::String)
             | TypeKind::List(_)
+            | TypeKind::Map { .. }
             | TypeKind::Nominal { .. }
             | TypeKind::Task(_)
             | TypeKind::Function { .. }
