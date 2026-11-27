@@ -677,7 +677,7 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 sval := ll_resolve_operand(m, sty, vv[1])
                 mut p_raw := pv[1]
                 psp := str_find(p_raw, " ")
-                if psp > 0 && str_starts_with(p_raw, "%"):
+                if psp > 0 && (str_starts_with(p_raw, "%") || str_starts_with(p_raw, "@")):
                     p_raw = str_substr(p_raw, 0, psp)
                 sptr := ll_resolve_operand(m, pv[0], p_raw)
                 st_safe := ll_is_statically_safe_ptr(m, sptr, p_raw, ll_access_size(sty), frame_size, checked_ptrs, known_stack_off, known_global_off)
@@ -723,7 +723,7 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 asz := ll_sizeof(m.tenv, str_trim(parts[0]))
                 cv := ll_split_type_and_val(parts[1])
                 cnt_expr := ll_resolve_operand(m, cv[0], cv[1])
-                fputs(str_concat(ind, str_concat(lhs, str_concat(" = _sp_alloc(((", str_concat(cnt_expr, str_concat(") * ", str_concat(int_to_str(asz), ") + 15) & (-16))\n")))))), fp)
+                fputs(str_concat(ind, str_concat(lhs, str_concat(" = _sp_alloc((((", str_concat(cnt_expr, str_concat(") * ", str_concat(int_to_str(asz), ") + 15) & (-16))\n")))))), fp)
                 continue
 
             if str_starts_with(rhs, "load "):
@@ -738,7 +738,7 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                     pv := ll_split_type_and_val(lparts[1])
                     mut p_raw := pv[1]
                     psp := str_find(p_raw, " ")
-                    if psp > 0 && str_starts_with(p_raw, "%"):
+                    if psp > 0 && (str_starts_with(p_raw, "%") || str_starts_with(p_raw, "@")):
                         p_raw = str_substr(p_raw, 0, psp)
                     lptr := ll_resolve_operand(m, pv[0], p_raw)
                     ld_safe := ll_is_statically_safe_ptr(m, lptr, p_raw, ll_access_size(lty), frame_size, checked_ptrs, known_stack_off, known_global_off)
@@ -957,6 +957,10 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = (", str_concat(se, ") as Int\n")))), fp)
                     elif op == "fptoui":
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = _fptoui64(", str_concat(se, ")\n")))), fp)
+                    elif op == "bitcast" && ll_is_float_type(src_ty) && !ll_is_float_type(dst_ty):
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = _f64_to_i64(", str_concat(se, ")\n")))), fp)
+                    elif op == "bitcast" && !ll_is_float_type(src_ty) && ll_is_float_type(dst_ty):
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = _i64_to_f64(", str_concat(se, ")\n")))), fp)
                     else:
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(se, "\n")))), fp)
                 continue
@@ -1381,13 +1385,35 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
     if str_starts_with(callee, "@llvm.va_start"):
         fputs(str_concat(ind, str_concat("_va_init(", str_concat(arg_exprs[0], ", _va)\n"))), fp)
         return
-    if str_starts_with(callee, "@llvm.va_end") || str_starts_with(callee, "@llvm.lifetime.") || str_starts_with(callee, "@llvm.dbg."):
+    if str_starts_with(callee, "@llvm.va_end") || str_starts_with(callee, "@llvm.lifetime.") || str_starts_with(callee, "@llvm.dbg.") || str_starts_with(callee, "@llvm.prefetch."):
+        return
+    if str_starts_with(callee, "@llvm.va_copy"):
+        fputs(str_concat(ind, str_concat("memcpy(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ", 24)\n"))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.stacksave."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, " = lpp_global_slot_get(1)\n")), fp)
+        return
+    if str_starts_with(callee, "@llvm.stackrestore."):
+        fputs(str_concat(ind, str_concat("_sp_free(", str_concat(arg_exprs[0], ")\n"))), fp)
+        return
+    if str_starts_with(callee, "@llvm.abs."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = abs(", str_concat(ll_sign_ext_expr(arg_tys[0], arg_exprs[0]), ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.floor."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = floor(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.ceil."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = ceil(", str_concat(arg_exprs[0], ")\n")))), fp)
         return
     if str_starts_with(callee, "@llvm.fmuladd."):
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = ((", str_concat(arg_exprs[0], str_concat(") * (", str_concat(arg_exprs[1], str_concat(")) + (", str_concat(arg_exprs[2], ")\n")))))))), fp)
         return
-    if str_starts_with(callee, "@llvm.fabs."):
+    if str_starts_with(callee, "@llvm.fabs.f64") || str_starts_with(callee, "@llvm.fabs.f32"):
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = _fabs(", str_concat(arg_exprs[0], ")\n")))), fp)
         return
@@ -1443,7 +1469,7 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
             if callee == "@mremap":
                 want_n = 5
             elif callee == "@printf" || callee == "@fprintf" || callee == "@snprintf" || callee == "@sprintf":
-                want_n = 6
+                want_n = 10
             while len(arg_exprs) < want_n:
                 list_push(arg_exprs, "0")
 
@@ -1551,15 +1577,16 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             if len(info) >= 5:
                 sym := info[0]
                 is_prelude_alloc := safety_mode && (sym == "@malloc" || sym == "@calloc" || sym == "@realloc" || sym == "@free")
-                if !str_starts_with(sym, "@llvm.") && (sym != "@calloc" || safety_mode) && sym != "@memcpy" && sym != "@memmove" && sym != "@memset":
+                is_prelude_fn := sym == "@calloc" || sym == "@memcpy" || sym == "@memmove" || sym == "@memset"
+                if !str_starts_with(sym, "@llvm."):
                     if !map_has(m.extern_defined, sym):
                         map_put(m.extern_defined, sym, 1)
-                        if !is_prelude_alloc:
+                        if !is_prelude_alloc && !is_prelude_fn:
                             list_push(m.extern_names, str_concat(sym, ""))
                             list_push(m.extern_sigs, info[2])
                         if info[3] == "1":
                             map_put(m.extern_varargs, sym, 1)
-                        # Also give extern C functions a function ID in case their address is taken (e.g. @free)
+                        # Always give extern C functions (including calloc/free) a function ID in case their address is taken!
                         fid := len(m.func_id_to_name)
                         map_put(m.func_ids, sym, fid)
                         list_push(m.func_id_to_name, str_concat(sym, ""))
@@ -1597,7 +1624,7 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
                 if esym == "@mremap":
                     want_n = 5
                 elif esym == "@printf" || esym == "@fprintf" || esym == "@snprintf" || esym == "@sprintf":
-                    want_n = 6
+                    want_n = 10
                 while str_len(pchars) < want_n:
                     pchars = str_concat(pchars, "i")
             mut pdecls := list_new()
