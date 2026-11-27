@@ -22,7 +22,7 @@ def ll_type_sig_ch(ty_in: Str) -> Str:
     ty := str_trim(ty_in)
     if ty == "void":
         return "v"
-    if ty == "double" || ty == "float":
+    if ty == "double" || ty == "float" || ty == "x86_fp80":
         return "f"
     return "i"
 
@@ -30,7 +30,7 @@ def ll_lpp_type_for(ty_in: Str) -> Str:
     ty := str_trim(ty_in)
     if ty == "void":
         return "Void"
-    if ty == "double" || ty == "float":
+    if ty == "double" || ty == "float" || ty == "x86_fp80":
         return "Float"
     return "Int"
 
@@ -99,6 +99,9 @@ struct LLModule:
     cur_var_map: Map[Str, Int]
     cur_var_list: List[Str]
     safety_mode: Bool
+    uses_pthreads: Bool
+    uses_pthread_once: Bool
+    uses_qsort: Bool
     stat_proven_stack: Int
     stat_proven_global: Int
     stat_proven_dom: Int
@@ -113,7 +116,7 @@ def ll_module_new(safety_mode: Bool) -> LLModule:
     list_push(sigs, "")
     mut ret_tys := list_new()
     list_push(ret_tys, "")
-    return LLModule(ll_type_env_new(), map_new(), list_new(), list_new(), list_new(), 16, map_new(), lpp_names, sigs, map_new(), ret_tys, id_to_name, map_new(), list_new(), list_new(), map_new(), map_new(), map_new(), list_new(), map_new(), list_new(), safety_mode, 0, 0, 0, 0)
+    return LLModule(ll_type_env_new(), map_new(), list_new(), list_new(), list_new(), 16, map_new(), lpp_names, sigs, map_new(), ret_tys, id_to_name, map_new(), list_new(), list_new(), map_new(), map_new(), map_new(), list_new(), map_new(), list_new(), safety_mode, false, false, false, 0, 0, 0, 0)
 
 def ll_get_func_lpp_name(m: LLModule, sym: Str) -> Str:
     if !map_has(m.func_ids, sym):
@@ -231,11 +234,33 @@ def ll_eval_const_gep(m: LLModule, expr: Str) -> List[Str]:
     list_push(res, int_to_str(byte_off))
     return res
 
+# Convert x86 80-bit extended hex float (0xK<20 hex>) to IEEE-754 f64 bits
+def ll_parse_fp80_to_f64_bits(s: Str) -> Int:
+    if str_len(s) < 23:
+        return 0
+    se16 := ll_parse_hex_u64(str_substr(s, 3, 4))
+    sig := ll_parse_hex_u64(str_substr(s, 7, 16)) as U64
+    sign := (se16 >> 15) & 1
+    exp15 := se16 & 32767
+    if exp15 == 0 && sig == (0 as U64):
+        return sign << 63
+    frac52 := ((sig >> (11 as U64)) as Int) & 4503599627370495
+    if exp15 == 32767:
+        return (sign << 63) | (2047 << 52) | frac52
+    exp64 := exp15 - 16383 + 1023
+    if exp64 <= 0:
+        return sign << 63
+    if exp64 >= 2047:
+        return (sign << 63) | (2047 << 52)
+    return (sign << 63) | (exp64 << 52) | frac52
+
 # Parse a float/double literal string from LLVM IR into an L++ Float expression
 def ll_float_literal_expr(s_in: Str) -> Str:
     s := str_trim(s_in)
     if s == "0.0" || s == "zeroinitializer" || s == "undef" || s == "poison":
         return "0.0"
+    if str_starts_with(s, "0xK") || str_starts_with(s, "0xk"):
+        return str_concat("_i64_to_f64(", str_concat(int_to_str(ll_parse_fp80_to_f64_bits(s)), ")"))
     if str_starts_with(s, "0x") || str_starts_with(s, "0X"):
         bits := ll_parse_hex_u64(s)
         return str_concat("_i64_to_f64(", str_concat(int_to_str(bits), ")"))
@@ -243,6 +268,11 @@ def ll_float_literal_expr(s_in: Str) -> Str:
     return s
 
 # Emit global initializer statements into `stmts` list
+def ll_i64_str(iv: Int) -> Str:
+    if iv == (-9223372036854775807 - 1):
+        return "(-9223372036854775807 - 1)"
+    return int_to_str(iv)
+
 def ll_emit_global_init_val(m: LLModule, ty_in: Str, val_in: Str, off: Int, stmts: List[Str]):
     ty := str_trim(ty_in)
     val := str_trim(val_in)
@@ -332,7 +362,7 @@ def ll_emit_global_init_val(m: LLModule, ty_in: Str, val_in: Str, off: Int, stmt
                 tv := ll_split_type_and_val(sub)
                 iv := ll_parse_int_str(tv[1])
                 if iv != 0:
-                    list_push(stmts, str_concat("    _st64(g + ", str_concat(int_to_str(off), str_concat(", ", str_concat(int_to_str(iv), ")")))))
+                    list_push(stmts, str_concat("    _st64(g + ", str_concat(int_to_str(off), str_concat(", ", str_concat(ll_i64_str(iv), ")")))))
             return
         return
     # Float / Double
@@ -357,7 +387,7 @@ def ll_emit_global_init_val(m: LLModule, ty_in: Str, val_in: Str, off: Int, stmt
     elif ty == "i32":
         list_push(stmts, str_concat("    _st32(g + ", str_concat(int_to_str(off), str_concat(", ", str_concat(int_to_str(iv), ")")))))
     else:
-        list_push(stmts, str_concat("    _st64(g + ", str_concat(int_to_str(off), str_concat(", ", str_concat(int_to_str(iv), ")")))))
+        list_push(stmts, str_concat("    _st64(g + ", str_concat(int_to_str(off), str_concat(", ", str_concat(ll_i64_str(iv), ")")))))
 
 # --- Operand resolution inside a function ---
 
@@ -430,6 +460,8 @@ def ll_sign_ext_expr(ty: Str, expr: Str) -> Str:
         return str_concat("(((", str_concat(expr, ") << 48) >> 48)"))
     if ty == "i32":
         return str_concat("(((", str_concat(expr, ") << 32) >> 32)"))
+    if ty == "i40":
+        return str_concat("(((", str_concat(expr, ") << 24) >> 24)"))
     return expr
 
 def ll_zero_ext_expr(ty: Str, expr: Str) -> Str:
@@ -441,6 +473,8 @@ def ll_zero_ext_expr(ty: Str, expr: Str) -> Str:
         return str_concat("((", str_concat(expr, ") & 65535)"))
     if ty == "i32":
         return str_concat("((", str_concat(expr, ") & 4294967295)"))
+    if ty == "i40":
+        return str_concat("((", str_concat(expr, ") & 1099511627775)"))
     return expr
 
 # Strip trailing metadata/comments like `, !dbg !123`, `, !llvm.loop !6`, `; ...` from an instruction
@@ -614,9 +648,18 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
         if str_starts_with(s, "ret "):
             ret_rest := str_trim(str_substr(s, 4, str_len(s) - 4))
             if frame_size > 0:
-                fputs(str_concat(ind, "lpp_global_slot_set(1, _sp)\n"), fp)
+                if m.uses_pthreads:
+                    fputs(str_concat(ind, "_sp_free(_sp)\n"), fp)
+                else:
+                    fputs(str_concat(ind, "lpp_global_slot_set(1, _sp)\n"), fp)
             if ret_rest == "void":
                 fputs(str_concat(ind, "return\n"), fp)
+            elif str_starts_with(ret_rest, "{"):
+                cb := ll_find_matching(ret_rest, 0, "{", "}")
+                rval := str_trim(str_substr(ret_rest, cb + 1, str_len(ret_rest) - cb - 1))
+                rv := ll_ssa_lookup(m, rval)
+                fputs(str_concat(ind, str_concat("_ret1_set(", str_concat(rv, "_1)\n"))), fp)
+                fputs(str_concat(ind, str_concat("return ", str_concat(rv, "\n"))), fp)
             else:
                 tv := ll_split_type_and_val(ret_rest)
                 val_expr := ll_resolve_operand(m, tv[0], tv[1])
@@ -625,7 +668,10 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
 
         if s == "unreachable":
             if frame_size > 0:
-                fputs(str_concat(ind, "lpp_global_slot_set(1, _sp)\n"), fp)
+                if m.uses_pthreads:
+                    fputs(str_concat(ind, "_sp_free(_sp)\n"), fp)
+                else:
+                    fputs(str_concat(ind, "lpp_global_slot_set(1, _sp)\n"), fp)
             if ret_lpp == "Void":
                 fputs(str_concat(ind, "return\n"), fp)
             elif ret_lpp == "Float":
@@ -959,20 +1005,36 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                     fty := av[0]
                     a_e := ll_resolve_operand(m, fty, av[1])
                     b_e := ll_resolve_operand(m, fty, str_trim(fparts[1]))
-                    mut op_s := "=="
-                    if pred == "oeq" || pred == "ueq":
-                        op_s = "=="
-                    elif pred == "one" || pred == "une":
-                        op_s = "!="
-                    elif pred == "olt" || pred == "ult":
-                        op_s = "<"
-                    elif pred == "ole" || pred == "ule":
-                        op_s = "<="
-                    elif pred == "ogt" || pred == "ugt":
-                        op_s = ">"
-                    elif pred == "oge" || pred == "uge":
-                        op_s = ">="
-                    fcond := str_concat("(", str_concat(a_e, str_concat(") ", str_concat(op_s, str_concat(" (", str_concat(b_e, ")"))))))
+                    mut fcond := ""
+                    if pred == "uno":
+                        fcond = str_concat("(((", str_concat(a_e, str_concat(") != (", str_concat(a_e, str_concat(")) || ((", str_concat(b_e, str_concat(") != (", str_concat(b_e, ")))"))))))))
+                    elif pred == "ord":
+                        fcond = str_concat("(((", str_concat(a_e, str_concat(") == (", str_concat(a_e, str_concat(")) && ((", str_concat(b_e, str_concat(") == (", str_concat(b_e, ")))"))))))))
+                    elif pred == "one":
+                        fcond = str_concat("(((", str_concat(a_e, str_concat(") < (", str_concat(b_e, str_concat(")) || ((", str_concat(a_e, str_concat(") > (", str_concat(b_e, ")))"))))))))
+                    elif pred == "ueq":
+                        fcond = str_concat("!(((", str_concat(a_e, str_concat(") < (", str_concat(b_e, str_concat(")) || ((", str_concat(a_e, str_concat(") > (", str_concat(b_e, ")))"))))))))
+                    elif pred == "ult":
+                        fcond = str_concat("!((", str_concat(a_e, str_concat(") >= (", str_concat(b_e, "))"))))
+                    elif pred == "ule":
+                        fcond = str_concat("!((", str_concat(a_e, str_concat(") > (", str_concat(b_e, "))"))))
+                    elif pred == "ugt":
+                        fcond = str_concat("!((", str_concat(a_e, str_concat(") <= (", str_concat(b_e, "))"))))
+                    elif pred == "uge":
+                        fcond = str_concat("!((", str_concat(a_e, str_concat(") < (", str_concat(b_e, "))"))))
+                    else:
+                        mut op_s := "=="
+                        if pred == "une":
+                            op_s = "!="
+                        elif pred == "olt":
+                            op_s = "<"
+                        elif pred == "ole":
+                            op_s = "<="
+                        elif pred == "ogt":
+                            op_s = ">"
+                        elif pred == "oge":
+                            op_s = ">="
+                        fcond = str_concat("(", str_concat(a_e, str_concat(") ", str_concat(op_s, str_concat(" (", str_concat(b_e, ")"))))))
                     fused_idx := ll_try_fuse_cmp_br(bbi, str_trim(str_substr(s, 0, eq)), raw_lhs, fcond, idx, end_idx, body_lines, label_to_bb, edge_phi_map, edge_phi_lists, cross_bb, ind, fp)
                     if fused_idx >= 0:
                         idx = fused_idx
@@ -984,7 +1046,10 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 continue
 
             if str_starts_with(rhs, "select "):
-                srest := str_trim(str_substr(rhs, 7, str_len(rhs) - 7))
+                mut srest := str_trim(str_substr(rhs, 7, str_len(rhs) - 7))
+                while str_starts_with(srest, "fast ") || str_starts_with(srest, "nnan ") || str_starts_with(srest, "ninf ") || str_starts_with(srest, "nsz ") || str_starts_with(srest, "arcp ") || str_starts_with(srest, "contract ") || str_starts_with(srest, "afn ") || str_starts_with(srest, "reassoc "):
+                    ssp := str_find(srest, " ")
+                    srest = str_trim(str_substr(srest, ssp + 1, str_len(srest) - ssp - 1))
                 sparts := ll_split_top_level(srest)
                 if len(sparts) >= 3:
                     cv := ll_split_type_and_val(sparts[0])
@@ -1055,6 +1120,82 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                 fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(fe, "\n")))), fp)
                 continue
 
+            if str_starts_with(rhs, "atomicrmw "):
+                mut arest := str_trim(str_substr(rhs, 10, str_len(rhs) - 10))
+                if str_starts_with(arest, "volatile "):
+                    arest = str_trim(str_substr(arest, 9, str_len(arest) - 9))
+                asp := str_find(arest, " ")
+                if asp > 0:
+                    aop := str_substr(arest, 0, asp)
+                    mut op_code := 5
+                    if aop == "xchg":
+                        op_code = 0
+                    elif aop == "add":
+                        op_code = 1
+                    elif aop == "sub":
+                        op_code = 2
+                    elif aop == "and":
+                        op_code = 3
+                    elif aop == "or":
+                        op_code = 4
+                    arest2 := str_trim(str_substr(arest, asp + 1, str_len(arest) - asp - 1))
+                    aparts := ll_split_top_level(arest2)
+                    if len(aparts) >= 2:
+                        ptv := ll_split_type_and_val(aparts[0])
+                        pe := ll_resolve_operand(m, ptv[0], ptv[1])
+                        vraw := str_trim(aparts[1])
+                        vsp := str_find(vraw, " ")
+                        mut vty := "i32"
+                        mut vval := "0"
+                        if vsp > 0:
+                            vty = str_substr(vraw, 0, vsp)
+                            mut vr2 := str_trim(str_substr(vraw, vsp + 1, str_len(vraw) - vsp - 1))
+                            vsp2 := str_find(vr2, " ")
+                            if vsp2 > 0:
+                                vr2 = str_substr(vr2, 0, vsp2)
+                            vval = ll_resolve_operand(m, vty, vr2)
+                        mut rmw_fn := "_atomic_rmw32("
+                        if vty == "i64" || vty == "ptr":
+                            rmw_fn = "_atomic_rmw64("
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(rmw_fn, str_concat(int_to_str(op_code), str_concat(", ", str_concat(pe, str_concat(", ", str_concat(vval, ")\n"))))))))), fp)
+                continue
+
+            if str_starts_with(rhs, "insertvalue "):
+                ivrest := str_trim(str_substr(rhs, 12, str_len(rhs) - 12))
+                iparts := ll_split_top_level(ivrest)
+                if len(iparts) >= 3:
+                    agg_tv := ll_split_type_and_val(iparts[0])
+                    agg_val := str_trim(agg_tv[1])
+                    val_tv := ll_split_type_and_val(iparts[1])
+                    ve := ll_resolve_operand(m, val_tv[0], val_tv[1])
+                    idx_s := str_trim(iparts[2])
+                    agg_is_zero := agg_val == "poison" || agg_val == "undef" || agg_val == "zeroinitializer"
+                    mut agg_e := "0"
+                    mut agg_e1 := "0"
+                    if !agg_is_zero:
+                        agg_e = ll_ssa_lookup(m, agg_val)
+                        agg_e1 = str_concat(agg_e, "_1")
+                    if idx_s == "0":
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(ve, "\n")))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat("_1 = ", str_concat(agg_e1, "\n")))), fp)
+                    else:
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(agg_e, "\n")))), fp)
+                        fputs(str_concat(ind, str_concat(lhs, str_concat("_1 = ", str_concat(ve, "\n")))), fp)
+                continue
+
+            if str_starts_with(rhs, "extractvalue "):
+                evrest := str_trim(str_substr(rhs, 13, str_len(rhs) - 13))
+                eparts := ll_split_top_level(evrest)
+                if len(eparts) >= 2:
+                    agg_tv := ll_split_type_and_val(eparts[0])
+                    agg_e := ll_ssa_lookup(m, str_trim(agg_tv[1]))
+                    idx_s := str_trim(eparts[1])
+                    if idx_s == "1":
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(agg_e, "_1\n")))), fp)
+                    else:
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(agg_e, "\n")))), fp)
+                continue
+
             sp := str_find(rhs, " ")
             if sp > 0:
                 op := str_substr(rhs, 0, sp)
@@ -1076,6 +1217,8 @@ def ll_emit_single_bb(m: LLModule, bbi: Int, num_bbs: Int, body_lines: List[Str]
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = (", str_concat(ae, str_concat(") * (", str_concat(be, ")\n")))))), fp)
                     elif op == "fdiv":
                         fputs(str_concat(ind, str_concat(lhs, str_concat(" = (", str_concat(ae, str_concat(") / (", str_concat(be, ")\n")))))), fp)
+                    elif op == "frem":
+                        fputs(str_concat(ind, str_concat(lhs, str_concat(" = fmod(", str_concat(ae, str_concat(", ", str_concat(be, ")\n")))))), fp)
                     elif op == "sdiv":
                         if m.safety_mode:
                             fputs(str_concat(ind, str_concat(lhs, str_concat(" = _safe_sdiv(", str_concat(ll_sign_ext_expr(bty, ae), str_concat(", ", str_concat(ll_sign_ext_expr(bty, be), ")\n")))))), fp)
@@ -1141,6 +1284,7 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
     mut param_decls := list_new()
     mut param_set := map_new()
     mut var_is_float := map_new()
+    mut var_is_pair := map_new()
     if str_len(params_raw) > 0:
         plist := ll_split_top_level(params_raw)
         mut pi := 0
@@ -1221,13 +1365,19 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
                     map_put(def_bb, lhs, bbi)
                     list_push(all_vars, str_concat(lhs, ""))
                     list_push(all_var_bbs, bbi)
-                if str_starts_with(rhs, "load double,") || str_starts_with(rhs, "load float,") || str_starts_with(rhs, "load volatile double,") || str_starts_with(rhs, "load volatile float,") || str_starts_with(rhs, "fadd ") || str_starts_with(rhs, "fsub ") || str_starts_with(rhs, "fmul ") || str_starts_with(rhs, "fdiv ") || str_starts_with(rhs, "fneg ") || str_starts_with(rhs, "sitofp ") || str_starts_with(rhs, "uitofp ") || str_starts_with(rhs, "fpext ") || str_starts_with(rhs, "fptrunc ") || str_starts_with(rhs, "phi double ") || str_starts_with(rhs, "phi float ") || str_starts_with(rhs, "freeze double ") || str_starts_with(rhs, "freeze float ") || (str_starts_with(rhs, "bitcast ") && (str_ends_with(rhs, " to double") || str_ends_with(rhs, " to float"))) || (str_starts_with(rhs, "select ") && (str_contains(rhs, ", double ") || str_contains(rhs, ", float "))):
+                if str_starts_with(rhs, "load double,") || str_starts_with(rhs, "load float,") || str_starts_with(rhs, "load x86_fp80,") || str_starts_with(rhs, "load volatile double,") || str_starts_with(rhs, "load volatile float,") || str_starts_with(rhs, "fadd ") || str_starts_with(rhs, "fsub ") || str_starts_with(rhs, "fmul ") || str_starts_with(rhs, "fdiv ") || str_starts_with(rhs, "frem ") || str_starts_with(rhs, "fneg ") || str_starts_with(rhs, "sitofp ") || str_starts_with(rhs, "uitofp ") || str_starts_with(rhs, "fpext ") || str_starts_with(rhs, "fptrunc ") || (str_starts_with(rhs, "phi ") && (str_contains(rhs, " double [") || str_contains(rhs, " float [") || str_contains(rhs, " x86_fp80 ["))) || (str_starts_with(rhs, "freeze ") && (str_contains(rhs, " double ") || str_contains(rhs, " float ") || str_contains(rhs, " x86_fp80 "))) || (str_starts_with(rhs, "bitcast ") && (str_ends_with(rhs, " to double") || str_ends_with(rhs, " to float") || str_ends_with(rhs, " to x86_fp80"))) || (str_starts_with(rhs, "select ") && (str_contains(rhs, ", double ") || str_contains(rhs, ", float ") || str_contains(rhs, ", x86_fp80 "))):
                     map_put(var_is_float, lhs, 1)
+                elif str_starts_with(rhs, "insertvalue "):
+                    map_put(var_is_pair, lhs, 1)
+                    map_put(cross_bb, lhs, 1)
                 elif str_starts_with(rhs, "call ") || str_starts_with(rhs, "tail call ") || str_starts_with(rhs, "musttail call ") || str_starts_with(rhs, "notail call "):
                     cpos := str_find(rhs, "call ")
                     after_call := ll_strip_attrs(str_substr(rhs, cpos + 5, str_len(rhs) - cpos - 5))
-                    if str_starts_with(after_call, "double ") || str_starts_with(after_call, "float "):
+                    if str_starts_with(after_call, "double ") || str_starts_with(after_call, "float ") || str_starts_with(after_call, "x86_fp80 "):
                         map_put(var_is_float, lhs, 1)
+                    elif str_starts_with(after_call, "{"):
+                        map_put(var_is_pair, lhs, 1)
+                        map_put(cross_bb, lhs, 1)
                 if bbi == 0 && str_starts_with(rhs, "alloca "):
                     rest := str_trim(str_substr(rhs, 7, str_len(rhs) - 7))
                     parts := ll_split_top_level(rest)
@@ -1324,7 +1474,7 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
                     after_phi := str_trim(str_substr(rhs, 4, str_len(rhs) - 4))
                     br_pos := str_find(after_phi, "[")
                     if br_pos > 0:
-                        phi_ty := str_trim(str_substr(after_phi, 0, br_pos))
+                        phi_ty := ll_strip_attrs(str_substr(after_phi, 0, br_pos))
                         pairs_str := str_substr(after_phi, br_pos, str_len(after_phi) - br_pos)
                         pairs := ll_split_top_level(pairs_str)
                         mut pi := 0
@@ -1355,11 +1505,14 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
     if uses_gb:
         fputs("        _gb := lpp_global_slot_get(0)\n", fp)
 
-    # Allocate shadow stack frame if needed (inline to avoid C call overhead)
+    # Allocate shadow stack frame if needed (inline when single-threaded)
     frame_size = ll_align_up(frame_size, 16)
     if frame_size > 0:
-        fputs("        _sp := lpp_global_slot_get(1)\n", fp)
-        fputs(str_concat("        lpp_global_slot_set(1, _sp + ", str_concat(int_to_str(frame_size), ")\n")), fp)
+        if m.uses_pthreads:
+            fputs(str_concat("        _sp := _sp_alloc(", str_concat(int_to_str(frame_size), ")\n")), fp)
+        else:
+            fputs("        _sp := lpp_global_slot_get(1)\n", fp)
+            fputs(str_concat("        lpp_global_slot_set(1, _sp + ", str_concat(int_to_str(frame_size), ")\n")), fp)
 
     # Declare only cross-BB vars + pooled block-local temps (_ti0.._ti{max_ti-1}, _tf0.._tf{max_tf-1})
     vi = 0
@@ -1369,6 +1522,8 @@ def ll_emit_function(m: LLModule, hdr: Str, body_lines: List[Str], fp: RawPtr):
             fputs(str_concat("        mut ", str_concat(vn, ": Float = 0.0\n")), fp)
         else:
             fputs(str_concat("        mut ", str_concat(vn, ": Int = 0\n")), fp)
+            if map_has(var_is_pair, vn):
+                fputs(str_concat("        mut ", str_concat(vn, "_1: Int = 0\n")), fp)
         vi = vi + 1
     mut ti := 0
     while ti < max_ti:
@@ -1490,14 +1645,17 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
     if str_starts_with(callee, "@llvm.va_start"):
         fputs(str_concat(ind, str_concat("_va_init(", str_concat(arg_exprs[0], ", _va)\n"))), fp)
         return
-    if str_starts_with(callee, "@llvm.va_end") || str_starts_with(callee, "@llvm.lifetime.") || str_starts_with(callee, "@llvm.dbg.") || str_starts_with(callee, "@llvm.prefetch.") || str_starts_with(callee, "@llvm.assume"):
+    if str_starts_with(callee, "@llvm.va_end") || str_starts_with(callee, "@llvm.lifetime.") || str_starts_with(callee, "@llvm.dbg.") || str_starts_with(callee, "@llvm.prefetch.") || str_starts_with(callee, "@llvm.assume") || str_starts_with(callee, "@llvm.experimental."):
         return
     if str_starts_with(callee, "@llvm.va_copy"):
         fputs(str_concat(ind, str_concat("memcpy(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ", 24)\n"))))), fp)
         return
     if str_starts_with(callee, "@llvm.stacksave."):
         if str_len(lhs) > 0:
-            fputs(str_concat(ind, str_concat(lhs, " = lpp_global_slot_get(1)\n")), fp)
+            if m.uses_pthreads:
+                fputs(str_concat(ind, str_concat(lhs, " = _sp_get()\n")), fp)
+            else:
+                fputs(str_concat(ind, str_concat(lhs, " = lpp_global_slot_get(1)\n")), fp)
         return
     if str_starts_with(callee, "@llvm.stackrestore."):
         fputs(str_concat(ind, str_concat("_sp_free(", str_concat(arg_exprs[0], ")\n"))), fp)
@@ -1546,9 +1704,60 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = _ctpop64(", str_concat(ll_zero_ext_expr(arg_tys[0], arg_exprs[0]), ")\n")))), fp)
         return
+    if str_starts_with(callee, "@llvm.ctlz.i32"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _ctlz32(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.ctlz.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _ctlz64(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.uadd.sat."):
+        if str_len(lhs) > 0:
+            mut max_s := "4294967295"
+            if str_ends_with(callee, ".i8"):
+                max_s = "255"
+            elif str_ends_with(callee, ".i16"):
+                max_s = "65535"
+            elif str_ends_with(callee, ".i64"):
+                max_s = "-1"
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _uadd_sat(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], str_concat(", ", str_concat(max_s, ")\n")))))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.usub.sat."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _usub_sat(", str_concat(ll_zero_ext_expr(arg_tys[0], arg_exprs[0]), str_concat(", ", str_concat(ll_zero_ext_expr(arg_tys[1], arg_exprs[1]), ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.sadd.with.overflow.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _sadd_ov64(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+            fputs(str_concat(ind, str_concat(lhs, "_1 = _ret1_get()\n")), fp)
+        return
+    if str_starts_with(callee, "@llvm.ssub.with.overflow.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _ssub_ov64(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+            fputs(str_concat(ind, str_concat(lhs, "_1 = _ret1_get()\n")), fp)
+        return
+    if str_starts_with(callee, "@llvm.smul.with.overflow.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _smul_ov64(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+            fputs(str_concat(ind, str_concat(lhs, "_1 = _ret1_get()\n")), fp)
+        return
+    if str_starts_with(callee, "@llvm.umul.with.overflow.i64"):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _umul_ov64(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+            fputs(str_concat(ind, str_concat(lhs, "_1 = _ret1_get()\n")), fp)
+        return
     if str_starts_with(callee, "@llvm.load.relative.i64"):
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = _load_rel(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.copysign."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _copysign(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.is.fpclass."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = _is_fpclass(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
         return
     if str_starts_with(callee, "@llvm.floor."):
         if str_len(lhs) > 0:
@@ -1557,6 +1766,58 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
     if str_starts_with(callee, "@llvm.ceil."):
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = ceil(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.sqrt."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = sqrt(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.pow."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = pow(", str_concat(arg_exprs[0], str_concat(", ", str_concat(arg_exprs[1], ")\n")))))), fp)
+        return
+    if str_starts_with(callee, "@llvm.sin."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = sin(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.cos."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = cos(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.exp."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = exp(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.exp2."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = exp2(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.log."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = log(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.log10."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = log10(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.rint."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = rint(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.round."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = round(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.trunc."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = trunc(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.lrint."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = lrint(", str_concat(arg_exprs[0], ")\n")))), fp)
+        return
+    if str_starts_with(callee, "@llvm.llrint."):
+        if str_len(lhs) > 0:
+            fputs(str_concat(ind, str_concat(lhs, str_concat(" = llrint(", str_concat(arg_exprs[0], ")\n")))), fp)
         return
     if str_starts_with(callee, "@llvm.fmuladd."):
         if str_len(lhs) > 0:
@@ -1587,22 +1848,24 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
                 list_push(fixed_args, arg_exprs[fi])
                 fi = fi + 1
             if n_extra > 0:
-                fputs(str_concat(ind, str_concat("_va_b := _sp_alloc(", str_concat(int_to_str(n_extra * 8), ")\n"))), fp)
+                ind2 := str_concat(ind, "    ")
+                fputs(str_concat(ind, "if true:\n"), fp)
+                fputs(str_concat(ind2, str_concat("_va_b := _sp_alloc(", str_concat(int_to_str(n_extra * 8), ")\n"))), fp)
                 mut ei := 0
                 while ei < n_extra:
                     aidx := n_fixed + ei
                     if ll_is_float_type(arg_tys[aidx]):
-                        fputs(str_concat(ind, str_concat("_stf64(_va_b + ", str_concat(int_to_str(ei * 8), str_concat(", ", str_concat(arg_exprs[aidx], ")\n"))))), fp)
+                        fputs(str_concat(ind2, str_concat("_stf64(_va_b + ", str_concat(int_to_str(ei * 8), str_concat(", ", str_concat(arg_exprs[aidx], ")\n"))))), fp)
                     else:
-                        fputs(str_concat(ind, str_concat("_st64(_va_b + ", str_concat(int_to_str(ei * 8), str_concat(", ", str_concat(arg_exprs[aidx], ")\n"))))), fp)
+                        fputs(str_concat(ind2, str_concat("_st64(_va_b + ", str_concat(int_to_str(ei * 8), str_concat(", ", str_concat(arg_exprs[aidx], ")\n"))))), fp)
                     ei = ei + 1
                 list_push(fixed_args, "_va_b")
                 call_s := str_concat(target_name, str_concat("(", str_concat(str_join(fixed_args, ", "), ")")))
                 if str_len(lhs) > 0:
-                    fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(call_s, "\n")))), fp)
+                    fputs(str_concat(ind2, str_concat(lhs, str_concat(" = ", str_concat(call_s, "\n")))), fp)
                 else:
-                    fputs(str_concat(ind, str_concat(call_s, "\n")), fp)
-                fputs(str_concat(ind, "_sp_free(_va_b)\n"), fp)
+                    fputs(str_concat(ind2, str_concat(call_s, "\n")), fp)
+                fputs(str_concat(ind2, "_sp_free(_va_b)\n"), fp)
             else:
                 list_push(fixed_args, "0")
                 call_s := str_concat(target_name, str_concat("(", str_concat(str_join(fixed_args, ", "), ")")))
@@ -1612,19 +1875,64 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
                     fputs(str_concat(ind, str_concat(call_s, "\n")), fp)
             return
 
-        # Handle variadic extern libc calls (open64, fcntl64, mremap, printf, snprintf, ...) -> pad to fixed arity
+        # Lower printf/fprintf/snprintf/sprintf/__isoc99_sscanf via v* + SysV va_list (handles doubles & arbitrary arg counts!)
+        if callee == "@printf" || callee == "@fprintf" || callee == "@snprintf" || callee == "@sprintf" || callee == "@__isoc99_sscanf":
+            mut v_fn := "vprintf"
+            mut v_fixed := 1
+            if callee == "@fprintf":
+                v_fn = "vfprintf"
+                v_fixed = 2
+            elif callee == "@snprintf":
+                v_fn = "vsnprintf"
+                v_fixed = 3
+            elif callee == "@sprintf":
+                v_fn = "vsprintf"
+                v_fixed = 2
+            elif callee == "@__isoc99_sscanf":
+                v_fn = "__isoc99_vsscanf"
+                v_fixed = 2
+            mut v_args := list_new()
+            mut fi := 0
+            while fi < v_fixed && fi < len(arg_exprs):
+                list_push(v_args, arg_exprs[fi])
+                fi = fi + 1
+            mut n_extra := len(arg_exprs) - v_fixed
+            if n_extra < 0:
+                n_extra = 0
+            ind2 := str_concat(ind, "    ")
+            fputs(str_concat(ind, "if true:\n"), fp)
+            fputs(str_concat(ind2, str_concat("_va_b := _sp_alloc(", str_concat(int_to_str(24 + n_extra * 8), ")\n"))), fp)
+            fputs(str_concat(ind2, "_va_init(_va_b, _va_b + 24)\n"), fp)
+            mut ei := 0
+            while ei < n_extra:
+                aidx := v_fixed + ei
+                if ll_is_float_type(arg_tys[aidx]):
+                    fputs(str_concat(ind2, str_concat("_stf64(_va_b + ", str_concat(int_to_str(24 + ei * 8), str_concat(", ", str_concat(arg_exprs[aidx], ")\n"))))), fp)
+                else:
+                    fputs(str_concat(ind2, str_concat("_st64(_va_b + ", str_concat(int_to_str(24 + ei * 8), str_concat(", ", str_concat(arg_exprs[aidx], ")\n"))))), fp)
+                ei = ei + 1
+            list_push(v_args, "_va_b")
+            call_s := str_concat(v_fn, str_concat("(", str_concat(str_join(v_args, ", "), ")")))
+            if str_len(lhs) > 0:
+                fputs(str_concat(ind2, str_concat(lhs, str_concat(" = ", str_concat(call_s, "\n")))), fp)
+            else:
+                fputs(str_concat(ind2, str_concat(call_s, "\n")), fp)
+            fputs(str_concat(ind2, "_sp_free(_va_b)\n"), fp)
+            return
+
+        # Handle variadic extern libc calls (open64, fcntl64, mremap, prctl...) -> pad to fixed arity
         if map_has(m.extern_varargs, callee) && map_get(m.extern_varargs, callee) == 1:
             mut want_n := 3
-            if callee == "@mremap":
+            if callee == "@mremap" || callee == "@prctl":
                 want_n = 5
-            elif callee == "@printf" || callee == "@fprintf" || callee == "@snprintf" || callee == "@sprintf":
-                want_n = 10
             while len(arg_exprs) < want_n:
                 list_push(arg_exprs, "0")
 
         call_s := str_concat(target_name, str_concat("(", str_concat(str_join(arg_exprs, ", "), ")")))
         if str_len(lhs) > 0:
             fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(call_s, "\n")))), fp)
+            if str_starts_with(ret_ty, "{"):
+                fputs(str_concat(ind, str_concat(lhs, "_1 = _ret1_get()\n")), fp)
         else:
             fputs(str_concat(ind, str_concat(call_s, "\n")), fp)
         return
@@ -1647,6 +1955,8 @@ def ll_emit_call_stmt(m: LLModule, lhs: Str, stmt: Str, ind: Str, fp: RawPtr):
     call_s := str_concat("_call_ind_", str_concat(sig, str_concat("(", str_concat(str_join(call_args, ", "), ")"))))
     if str_len(lhs) > 0:
         fputs(str_concat(ind, str_concat(lhs, str_concat(" = ", str_concat(call_s, "\n")))), fp)
+        if str_starts_with(ret_ty, "{"):
+            fputs(str_concat(ind, str_concat(lhs, "_1 = _ret1_get()\n")), fp)
     else:
         fputs(str_concat(ind, str_concat(call_s, "\n")), fp)
 
@@ -1669,6 +1979,9 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             eq := str_find(ln, " = ")
             gname := str_trim(str_substr(ln, 0, eq))
             mut rhs := str_trim(str_substr(ln, eq + 3, str_len(ln) - eq - 3))
+            if str_starts_with(gname, "@llvm.") || str_contains(rhs, "appending "):
+                i = i + 1
+                continue
             # Strip trailing ", align N" or ", comdat"
             al_pos := str_find(rhs, ", align ")
             mut g_align := 8
@@ -1725,8 +2038,17 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             info := ll_parse_func_header(ln)
             if len(info) >= 5:
                 sym := info[0]
+                if sym == "@pthread_create":
+                    m.uses_pthreads = true
+                    ll_register_ind_sig(m, "i_i")
+                elif sym == "@pthread_once":
+                    m.uses_pthread_once = true
+                    ll_register_ind_sig(m, "v_")
+                elif sym == "@qsort":
+                    m.uses_qsort = true
+                    ll_register_ind_sig(m, "i_ii")
                 is_prelude_alloc := safety_mode && (sym == "@malloc" || sym == "@calloc" || sym == "@realloc" || sym == "@free")
-                is_prelude_fn := sym == "@calloc" || sym == "@memcpy" || sym == "@memmove" || sym == "@memset"
+                is_prelude_fn := sym == "@malloc" || sym == "@calloc" || sym == "@realloc" || sym == "@free" || sym == "@memcpy" || sym == "@memmove" || sym == "@memset" || sym == "@exp" || sym == "@exp2" || sym == "@log" || sym == "@log10" || sym == "@rint" || sym == "@round" || sym == "@trunc" || sym == "@lrint" || sym == "@llrint" || sym == "@fabs" || sym == "@fdopen" || sym == "@vprintf" || sym == "@vfprintf" || sym == "@vsnprintf" || sym == "@vsprintf" || sym == "@__isoc99_vsscanf" || sym == "@printf" || sym == "@fprintf" || sym == "@snprintf" || sym == "@sprintf" || sym == "@__isoc99_sscanf" || sym == "@pthread_create" || sym == "@pthread_once" || sym == "@qsort" || sym == "@sigaction" || sym == "@__sysv_signal" || sym == "@exit" || sym == "@floor" || sym == "@ceil" || sym == "@pow" || sym == "@sqrt" || sym == "@abs" || sym == "@min" || sym == "@max" || sym == "@cos" || sym == "@sin" || sym == "@tan" || sym == "@fmod"
                 if !str_starts_with(sym, "@llvm."):
                     if !map_has(m.extern_defined, sym):
                         map_put(m.extern_defined, sym, 1)
@@ -1740,7 +2062,17 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
                         map_put(m.func_ids, sym, fid)
                         list_push(m.func_id_to_name, str_concat(sym, ""))
                         mut raw_c := str_substr(sym, 1, str_len(sym) - 1)
-                        if is_prelude_alloc:
+                        if sym == "@pthread_create":
+                            raw_c = "_c2lpp_pthread_create"
+                        elif sym == "@pthread_once":
+                            raw_c = "_c2lpp_pthread_once"
+                        elif sym == "@qsort":
+                            raw_c = "_c2lpp_qsort"
+                        elif sym == "@sigaction":
+                            raw_c = "_c2lpp_sigaction"
+                        elif sym == "@__sysv_signal":
+                            raw_c = "_c2lpp_signal"
+                        elif is_prelude_alloc:
                             raw_c = str_concat("_safe_", raw_c)
                         list_push(m.func_lpp_names, raw_c)
                         list_push(m.func_sigs, info[2])
@@ -1754,7 +2086,7 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             return 1
 
     # Emit runtime prelude
-    ll_emit_runtime_prelude(fp, m.global_total, safety_mode)
+    ll_emit_runtime_prelude(fp, m.global_total, safety_mode, m.uses_pthreads)
 
     # Emit external libc/POSIX declarations
     if len(m.extern_names) > 0:
@@ -1770,9 +2102,9 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             # Pad variadic libc calls (open64, fcntl64, mremap, printf, ...) to fixed arity
             if map_has(m.extern_varargs, esym) && map_get(m.extern_varargs, esym) == 1:
                 mut want_n := 3
-                if esym == "@mremap":
+                if esym == "@mremap" || esym == "@prctl":
                     want_n = 5
-                elif esym == "@printf" || esym == "@fprintf" || esym == "@snprintf" || esym == "@sprintf":
+                elif esym == "@printf" || esym == "@fprintf" || esym == "@snprintf" || esym == "@sprintf" || esym == "@__isoc99_sscanf":
                     want_n = 10
                 while str_len(pchars) < want_n:
                     pchars = str_concat(pchars, "i")
@@ -1826,6 +2158,16 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
     while ci < chunk_id:
         fputs(str_concat("    _init_g_", str_concat(int_to_str(ci), "(g)\n")), fp)
         ci = ci + 1
+    if map_has(m.global_offsets, "@stdin") || map_has(m.global_offsets, "@stdout") || map_has(m.global_offsets, "@stderr"):
+        fputs("    _std_m := calloc(8, 1)\n", fp)
+        fputs("    _st8(_std_m, 114)\n", fp)
+        fputs("    _st8(_std_m + 4, 119)\n", fp)
+        if map_has(m.global_offsets, "@stdin"):
+            fputs(str_concat("    _st64(g + ", str_concat(int_to_str(map_get(m.global_offsets, "@stdin")), ", fdopen(0, _std_m))\n")), fp)
+        if map_has(m.global_offsets, "@stdout"):
+            fputs(str_concat("    _st64(g + ", str_concat(int_to_str(map_get(m.global_offsets, "@stdout")), ", fdopen(1, _std_m + 4))\n")), fp)
+        if map_has(m.global_offsets, "@stderr"):
+            fputs(str_concat("    _st64(g + ", str_concat(int_to_str(map_get(m.global_offsets, "@stderr")), ", fdopen(2, _std_m + 4))\n")), fp)
     fputs("\n", fp)
 
     # Pass 2: Emit all defined functions
@@ -1923,6 +2265,93 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
             fputs("    return\n\n", fp)
         di = di + 1
 
+    if m.uses_pthreads:
+        fputs("def _c2lpp_pthread_trampoline(wrap: Int) -> Int:\n", fp)
+        fputs("    fn_fid := _ld64(wrap)\n", fp)
+        fputs("    arg := _ld64(wrap + 8)\n", fp)
+        fputs("    free(wrap)\n", fp)
+        fputs("    stk := calloc(2097152, 1)\n", fp)
+        fputs("    _sp_set(stk)\n", fp)
+        fputs("    res := _call_ind_i_i(fn_fid, arg)\n", fp)
+        fputs("    _sp_set(0)\n", fp)
+        fputs("    free(stk)\n", fp)
+        fputs("    return res\n\n", fp)
+        fputs("def _c2lpp_pthread_create(tid_ptr: Int, attr: Int, fn_fid: Int, arg: Int) -> Int:\n", fp)
+        fputs("    wrap := calloc(16, 1)\n", fp)
+        fputs("    _st64(wrap, fn_fid)\n", fp)
+        fputs("    _st64(wrap + 8, arg)\n", fp)
+        fputs("    mut fn_addr := 0\n", fp)
+        fputs("    unsafe:\n", fp)
+        fputs("        cap := _c2lpp_pthread_trampoline\n", fp)
+        fputs("        fn_addr = ptr_read[Int](cap as Ptr[Int])\n", fp)
+        fputs("    return pthread_create(tid_ptr, attr, fn_addr, wrap)\n\n", fp)
+
+    if m.uses_pthread_once:
+        fputs("def _c2lpp_pthread_once(once_ptr: Int, fn_fid: Int) -> Int:\n", fp)
+        fputs("    while true:\n", fp)
+        fputs("        _atomic_lock()\n", fp)
+        fputs("        st := _ld32(once_ptr)\n", fp)
+        fputs("        if st == 2:\n", fp)
+        fputs("            _atomic_unlock()\n", fp)
+        fputs("            return 0\n", fp)
+        fputs("        if st == 0:\n", fp)
+        fputs("            _st32(once_ptr, 1)\n", fp)
+        fputs("            _atomic_unlock()\n", fp)
+        fputs("            _call_ind_v_(fn_fid)\n", fp)
+        fputs("            _atomic_lock()\n", fp)
+        fputs("            _st32(once_ptr, 2)\n", fp)
+        fputs("            _atomic_unlock()\n", fp)
+        fputs("            return 0\n", fp)
+        fputs("        _atomic_unlock()\n", fp)
+        fputs("    return 0\n\n", fp)
+
+    if m.uses_qsort:
+        fputs("def _c2lpp_qsort_rec(base: Int, lo: Int, hi: Int, sz: Int, cmp_fid: Int, tmp: Int):\n", fp)
+        fputs("    if lo >= hi:\n", fp)
+        fputs("        return\n", fp)
+        fputs("    if hi - lo <= 16:\n", fp)
+        fputs("        mut ii := lo + 1\n", fp)
+        fputs("        while ii <= hi:\n", fp)
+        fputs("            memcpy(tmp, base + ii * sz, sz)\n", fp)
+        fputs("            mut jj := ii - 1\n", fp)
+        fputs("            while jj >= lo && _call_ind_i_ii(cmp_fid, base + jj * sz, tmp) > 0:\n", fp)
+        fputs("                memcpy(base + (jj + 1) * sz, base + jj * sz, sz)\n", fp)
+        fputs("                jj = jj - 1\n", fp)
+        fputs("            memcpy(base + (jj + 1) * sz, tmp, sz)\n", fp)
+        fputs("            ii = ii + 1\n", fp)
+        fputs("        return\n", fp)
+        fputs("    mid := lo + (hi - lo) / 2\n", fp)
+        fputs("    memcpy(tmp, base + mid * sz, sz)\n", fp)
+        fputs("    mut i := lo\n", fp)
+        fputs("    mut j := hi\n", fp)
+        fputs("    while i <= j:\n", fp)
+        fputs("        while _call_ind_i_ii(cmp_fid, base + i * sz, tmp) < 0:\n", fp)
+        fputs("            i = i + 1\n", fp)
+        fputs("        while _call_ind_i_ii(cmp_fid, base + j * sz, tmp) > 0:\n", fp)
+        fputs("            j = j - 1\n", fp)
+        fputs("        if i <= j:\n", fp)
+        fputs("            if i != j:\n", fp)
+        fputs("                mut b := 0\n", fp)
+        fputs("                p1 := base + i * sz\n", fp)
+        fputs("                p2 := base + j * sz\n", fp)
+        fputs("                while b < sz:\n", fp)
+        fputs("                    t := _ld8(p1 + b)\n", fp)
+        fputs("                    _st8(p1 + b, _ld8(p2 + b))\n", fp)
+        fputs("                    _st8(p2 + b, t)\n", fp)
+        fputs("                    b = b + 1\n", fp)
+        fputs("            i = i + 1\n", fp)
+        fputs("            j = j - 1\n", fp)
+        fputs("    if lo < j:\n", fp)
+        fputs("        _c2lpp_qsort_rec(base, lo, j, sz, cmp_fid, tmp)\n", fp)
+        fputs("    if i < hi:\n", fp)
+        fputs("        _c2lpp_qsort_rec(base, i, hi, sz, cmp_fid, tmp)\n\n", fp)
+        fputs("def _c2lpp_qsort(base: Int, nmemb: Int, sz: Int, cmp_fid: Int):\n", fp)
+        fputs("    if nmemb <= 1 || sz <= 0:\n", fp)
+        fputs("        return\n", fp)
+        fputs("    tmp := calloc(sz, 1)\n", fp)
+        fputs("    _c2lpp_qsort_rec(base, 0, nmemb - 1, sz, cmp_fid, tmp)\n", fp)
+        fputs("    free(tmp)\n\n", fp)
+
     # Auto-emit L++ entry point if C code defined @main
     if map_has(m.func_ids, "@main"):
         msig := ll_get_func_sig(m, "@main")
@@ -1933,7 +2362,9 @@ def ll_translate_file(ll_path: Str, out_path: Str, safety_mode: Bool) -> Int:
         fputs("    c2lpp_init_globals()\n", fp)
         mut mcall := "c_main()"
         if str_len(mparams) == 2:
-            mcall = "c_main(0, 0)"
+            fputs("    _argc := args_count()\n", fp)
+            fputs("    _argv := _c2lpp_build_argv()\n", fp)
+            mcall = "c_main(_argc, _argv)"
         elif str_len(mparams) == 1:
             mcall = "c_main(0)"
         if mret == "v":

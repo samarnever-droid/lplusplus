@@ -677,6 +677,7 @@ fn is_cast_compatible(interner: &crate::TypeInterner, from: TypeId, to: TypeId) 
             true
         }
         _ if is_pointer_kind(interner, from) && is_pointer_kind(interner, to) => true,
+        (TypeKind::Function { .. }, _) if is_pointer_kind(interner, to) => true,
         _ => false,
     }
 }
