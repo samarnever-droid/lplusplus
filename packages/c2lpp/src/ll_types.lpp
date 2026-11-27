@@ -1,0 +1,652 @@
+# ll_types.lpp — LLVM 18 IR Type Layout, Constant Initializer & Flat-Memory Runtime Emitter (100% Pure L++)
+#
+# Computes exact x86-64 SysV ABI sizeof / alignof / struct field offsets for
+# arbitrary LLVM 18 IR types (including nested structs, packed structs <{...}>,
+# arrays [N x T], pointers, integers, float, double) and emits the pure-L++
+# flat-memory runtime prelude & global initializer functions.
+
+import stream_ast
+
+# --- String / parsing helpers ---
+
+def ll_is_ws(ch: Str) -> Bool:
+    return ch == " " || ch == "\t" || ch == "\r" || ch == "\n"
+
+def ll_is_digit(ch: Str) -> Bool:
+    if str_len(ch) == 0:
+        return false
+    c := ord(char_at(ch, 0))
+    return c >= 48 && c <= 57
+
+def ll_is_ident_ch(ch: Str) -> Bool:
+    if str_len(ch) == 0:
+        return false
+    c := ord(char_at(ch, 0))
+    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57):
+        return true
+    return c == 95 || c == 46 || c == 36 || c == 45
+
+def ll_sanitize_name(raw: Str) -> Str:
+    # Convert LLVM @foo.bar.12 or %struct.Foo to valid L++ identifier
+    n := str_len(raw)
+    mut out := list_new()
+    mut i := 0
+    while i < n:
+        c := ord(char_at(raw, i))
+        if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95:
+            list_push(out, str_substr(raw, i, 1))
+        else:
+            list_push(out, "_")
+        i = i + 1
+    res := str_join(out, "")
+    if str_len(res) == 0:
+        return "_anon"
+    # Avoid colliding with L++ keywords
+    if res == "type" || res == "match" || res == "in" || res == "mut" || res == "def" || res == "struct" || res == "enum" || res == "impl" || res == "trait" || res == "import" || res == "const" || res == "unsafe" || res == "as" || res == "if" || res == "elif" || res == "else" || res == "while" || res == "for" || res == "return" || res == "break" || res == "continue" || res == "true" || res == "false" || res == "self" || res == "extern" || res == "async" || res == "await" || res == "spawn" || res == "len" || res == "print" || res == "abs" || res == "min" || res == "max" || res == "exit" || res == "sleep" || res == "read_file" || res == "write_file" || res == "time":
+        return str_concat("_c_", res)
+    return res
+
+def ll_align_up(val: Int, align: Int) -> Int:
+    if align <= 1:
+        return val
+    rem := val % align
+    if rem == 0:
+        return val
+    return val + (align - rem)
+
+def ll_hex_val(ch: Str) -> Int:
+    if str_len(ch) == 0:
+        return 0
+    c := ord(char_at(ch, 0))
+    if c >= 48 && c <= 57:
+        return c - 48
+    if c >= 97 && c <= 102:
+        return c - 87
+    if c >= 65 && c <= 70:
+        return c - 55
+    return 0
+
+def ll_parse_hex_u64(s: Str) -> Int:
+    # Parse "0x..." into 64-bit two's-complement Int without overflow traps
+    mut start := 0
+    if str_starts_with(s, "0x") || str_starts_with(s, "0X"):
+        start = 2
+    mut acc: U64 = 0 as U64
+    mut i := start
+    n := str_len(s)
+    while i < n:
+        d := ll_hex_val(str_substr(s, i, 1)) as U64
+        acc = (acc << (4 as U64)) | d
+        i = i + 1
+    return acc as Int
+
+def ll_parse_int_str(s: Str) -> Int:
+    t := str_trim(s)
+    if str_len(t) == 0:
+        return 0
+    if str_starts_with(t, "0x") || str_starts_with(t, "0X"):
+        return ll_parse_hex_u64(t)
+    if t == "true":
+        return 1
+    if t == "false" || t == "null" || t == "undef" || t == "poison" || t == "zeroinitializer":
+        return 0
+    # Handle unsigned 64-bit decimal > i64::MAX
+    if str_len(t) >= 19 && !str_starts_with(t, "-"):
+        mut acc: U64 = 0 as U64
+        mut i := 0
+        n := str_len(t)
+        while i < n:
+            d := str_to_int(str_substr(t, i, 1)) as U64
+            acc = acc * (10 as U64) + d
+            i = i + 1
+        return acc as Int
+    return str_to_int(t)
+
+# Split a comma-separated list respecting (), [], {}, <> nesting and "..." strings
+def ll_split_top_level(s: Str) -> List[Str]:
+    mut out := list_new()
+    n := str_len(s)
+    mut depth := 0
+    mut in_str := false
+    mut start := 0
+    mut i := 0
+    while i < n:
+        ch := str_substr(s, i, 1)
+        if in_str:
+            if ch == "\\" && i + 1 < n:
+                i = i + 2
+                continue
+            if ch == "\"":
+                in_str = false
+        else:
+            if ch == "\"":
+                in_str = true
+            elif ch == "(" || ch == "[" || ch == "{" || ch == "<":
+                depth = depth + 1
+            elif ch == ")" || ch == "]" || ch == "}" || ch == ">":
+                if depth > 0:
+                    depth = depth - 1
+            elif ch == "," && depth == 0:
+                part := str_trim(str_substr(s, start, i - start))
+                if str_len(part) > 0:
+                    list_push(out, part)
+                start = i + 1
+        i = i + 1
+    tail := str_trim(str_substr(s, start, n - start))
+    if str_len(tail) > 0:
+        list_push(out, tail)
+    return out
+
+# Find matching closing delimiter starting at open_idx
+def ll_find_matching(s: Str, open_idx: Int, open_ch: Str, close_ch: Str) -> Int:
+    n := str_len(s)
+    mut depth := 0
+    mut in_str := false
+    mut i := open_idx
+    while i < n:
+        ch := str_substr(s, i, 1)
+        if in_str:
+            if ch == "\\" && i + 1 < n:
+                i = i + 2
+                continue
+            if ch == "\"":
+                in_str = false
+        else:
+            if ch == "\"":
+                in_str = true
+            elif ch == open_ch:
+                depth = depth + 1
+            elif ch == close_ch:
+                depth = depth - 1
+                if depth == 0:
+                    return i
+        i = i + 1
+    return -1
+
+# --- Type Registry (structs, sizeof, alignof, field offsets) ---
+
+struct LLTypeEnv:
+    struct_body_idx: Map[Str, Int]
+    struct_bodies: List[Str]
+    struct_packed: Map[Str, Int]
+    size_cache: Map[Str, Int]
+    align_cache: Map[Str, Int]
+
+def ll_type_env_new() -> LLTypeEnv:
+    return LLTypeEnv(map_new(), list_new(), map_new(), map_new(), map_new())
+
+def ll_put_struct_body(env: LLTypeEnv, name: Str, body: Str):
+    idx := len(env.struct_bodies)
+    list_push(env.struct_bodies, body)
+    map_put(env.struct_body_idx, name, idx)
+
+def ll_get_struct_body(env: LLTypeEnv, name: Str) -> Str:
+    if !map_has(env.struct_body_idx, name):
+        return ""
+    return env.struct_bodies[map_get(env.struct_body_idx, name)]
+
+def ll_register_struct_line(env: LLTypeEnv, line: Str):
+    # %struct.Foo = type { i32, ptr }  OR  %struct.Bar = type <{ i8, i16 }>  OR  %struct.Opaque = type opaque
+    eq := str_find(line, " = type ")
+    if eq <= 0:
+        return
+    name := str_trim(str_substr(line, 0, eq))
+    rhs := str_trim(str_substr(line, eq + 8, str_len(line) - eq - 8))
+    if rhs == "opaque":
+        ll_put_struct_body(env, name, "")
+        map_put(env.struct_packed, name, 0)
+        map_put(env.size_cache, name, 0)
+        map_put(env.align_cache, name, 1)
+        return
+    if str_starts_with(rhs, "<{") && str_ends_with(rhs, "}>"):
+        inner := str_trim(str_substr(rhs, 2, str_len(rhs) - 4))
+        ll_put_struct_body(env, name, inner)
+        map_put(env.struct_packed, name, 1)
+    elif str_starts_with(rhs, "{") && str_ends_with(rhs, "}"):
+        inner := str_trim(str_substr(rhs, 1, str_len(rhs) - 2))
+        ll_put_struct_body(env, name, inner)
+        map_put(env.struct_packed, name, 0)
+
+def ll_alignof(env: LLTypeEnv, ty_in: Str) -> Int:
+    ty := str_trim(ty_in)
+    if map_has(env.align_cache, ty):
+        return map_get(env.align_cache, ty)
+    if ty == "i1" || ty == "i8":
+        return 1
+    if ty == "i16":
+        return 2
+    if ty == "i32" || ty == "float":
+        return 4
+    if ty == "i64" || ty == "double" || ty == "ptr" || str_ends_with(ty, "*"):
+        return 8
+    if ty == "void":
+        return 1
+    # Array: [N x ElemTy]
+    if str_starts_with(ty, "[") && str_ends_with(ty, "]"):
+        xpos := str_find(ty, " x ")
+        if xpos > 1:
+            elem_ty := str_trim(str_substr(ty, xpos + 3, str_len(ty) - xpos - 4))
+            a := ll_alignof(env, elem_ty)
+            map_put(env.align_cache, ty, a)
+            return a
+    # Inline packed struct <{ ... }>
+    if str_starts_with(ty, "<{") && str_ends_with(ty, "}>"):
+        map_put(env.align_cache, ty, 1)
+        return 1
+    # Inline struct { ... }
+    if str_starts_with(ty, "{") && str_ends_with(ty, "}"):
+        inner := str_trim(str_substr(ty, 1, str_len(ty) - 2))
+        fields := ll_split_top_level(inner)
+        mut max_a := 1
+        mut i := 0
+        while i < len(fields):
+            fa := ll_alignof(env, fields[i])
+            if fa > max_a:
+                max_a = fa
+            i = i + 1
+        map_put(env.align_cache, ty, max_a)
+        return max_a
+    # Named struct %struct.Foo
+    if str_starts_with(ty, "%"):
+        if map_has(env.struct_packed, ty) && map_get(env.struct_packed, ty) == 1:
+            map_put(env.align_cache, ty, 1)
+            return 1
+        if map_has(env.struct_body_idx, ty):
+            body := ll_get_struct_body(env, ty)
+            if str_len(body) == 0:
+                return 1
+            fields := ll_split_top_level(body)
+            mut max_a := 1
+            mut i := 0
+            while i < len(fields):
+                fa := ll_alignof(env, fields[i])
+                if fa > max_a:
+                    max_a = fa
+                i = i + 1
+            map_put(env.align_cache, ty, max_a)
+            return max_a
+    return 8
+
+def ll_sizeof(env: LLTypeEnv, ty_in: Str) -> Int:
+    ty := str_trim(ty_in)
+    if map_has(env.size_cache, ty):
+        return map_get(env.size_cache, ty)
+    if ty == "i1" || ty == "i8":
+        return 1
+    if ty == "i16":
+        return 2
+    if ty == "i32" || ty == "float":
+        return 4
+    if ty == "i64" || ty == "double" || ty == "ptr" || str_ends_with(ty, "*"):
+        return 8
+    if ty == "void":
+        return 0
+    # Array: [N x ElemTy]
+    if str_starts_with(ty, "[") && str_ends_with(ty, "]"):
+        xpos := str_find(ty, " x ")
+        if xpos > 1:
+            cnt := str_to_int(str_trim(str_substr(ty, 1, xpos - 1)))
+            elem_ty := str_trim(str_substr(ty, xpos + 3, str_len(ty) - xpos - 4))
+            sz := cnt * ll_sizeof(env, elem_ty)
+            map_put(env.size_cache, ty, sz)
+            return sz
+    # Inline packed struct <{ ... }>
+    if str_starts_with(ty, "<{") && str_ends_with(ty, "}>"):
+        inner := str_trim(str_substr(ty, 2, str_len(ty) - 4))
+        fields := ll_split_top_level(inner)
+        mut off := 0
+        mut i := 0
+        while i < len(fields):
+            off = off + ll_sizeof(env, fields[i])
+            i = i + 1
+        map_put(env.size_cache, ty, off)
+        return off
+    # Inline struct { ... }
+    if str_starts_with(ty, "{") && str_ends_with(ty, "}"):
+        inner := str_trim(str_substr(ty, 1, str_len(ty) - 2))
+        fields := ll_split_top_level(inner)
+        mut off := 0
+        mut max_a := 1
+        mut i := 0
+        while i < len(fields):
+            fa := ll_alignof(env, fields[i])
+            if fa > max_a:
+                max_a = fa
+            off = ll_align_up(off, fa)
+            off = off + ll_sizeof(env, fields[i])
+            i = i + 1
+        total := ll_align_up(off, max_a)
+        map_put(env.size_cache, ty, total)
+        return total
+    # Named struct %struct.Foo
+    if str_starts_with(ty, "%"):
+        if map_has(env.struct_body_idx, ty):
+            body := ll_get_struct_body(env, ty)
+            if str_len(body) == 0:
+                return 0
+            packed := map_has(env.struct_packed, ty) && map_get(env.struct_packed, ty) == 1
+            fields := ll_split_top_level(body)
+            mut off := 0
+            mut max_a := 1
+            mut i := 0
+            while i < len(fields):
+                if !packed:
+                    fa := ll_alignof(env, fields[i])
+                    if fa > max_a:
+                        max_a = fa
+                    off = ll_align_up(off, fa)
+                off = off + ll_sizeof(env, fields[i])
+                i = i + 1
+            mut total := off
+            if !packed:
+                total = ll_align_up(off, max_a)
+            map_put(env.size_cache, ty, total)
+            return total
+    return 8
+
+def ll_struct_fields(env: LLTypeEnv, ty_in: Str) -> List[Str]:
+    ty := str_trim(ty_in)
+    if str_starts_with(ty, "<{") && str_ends_with(ty, "}>"):
+        return ll_split_top_level(str_trim(str_substr(ty, 2, str_len(ty) - 4)))
+    if str_starts_with(ty, "{") && str_ends_with(ty, "}"):
+        return ll_split_top_level(str_trim(str_substr(ty, 1, str_len(ty) - 2)))
+    if str_starts_with(ty, "%") && map_has(env.struct_body_idx, ty):
+        return ll_split_top_level(ll_get_struct_body(env, ty))
+    return list_new()
+
+def ll_is_packed(env: LLTypeEnv, ty_in: Str) -> Bool:
+    ty := str_trim(ty_in)
+    if str_starts_with(ty, "<{"):
+        return true
+    if str_starts_with(ty, "%") && map_has(env.struct_packed, ty):
+        return map_get(env.struct_packed, ty) == 1
+    return false
+
+def ll_field_offset(env: LLTypeEnv, ty_in: Str, field_idx: Int) -> Int:
+    fields := ll_struct_fields(env, ty_in)
+    packed := ll_is_packed(env, ty_in)
+    mut off := 0
+    mut i := 0
+    while i < field_idx && i < len(fields):
+        if !packed:
+            off = ll_align_up(off, ll_alignof(env, fields[i]))
+        off = off + ll_sizeof(env, fields[i])
+        i = i + 1
+    if !packed && field_idx < len(fields):
+        off = ll_align_up(off, ll_alignof(env, fields[field_idx]))
+    return off
+
+def ll_array_elem_type(ty_in: Str) -> Str:
+    ty := str_trim(ty_in)
+    if str_starts_with(ty, "[") && str_ends_with(ty, "]"):
+        xpos := str_find(ty, " x ")
+        if xpos > 1:
+            return str_trim(str_substr(ty, xpos + 3, str_len(ty) - xpos - 4))
+    return "i8"
+
+def ll_is_float_type(ty_in: Str) -> Bool:
+    ty := str_trim(ty_in)
+    return ty == "double" || ty == "float"
+
+# Split "<type> <value>" from an LLVM typed operand/initializer (e.g. "[7 x i8] c\"3.49.1\\00\"" or "%struct.Foo { ... }")
+def ll_split_type_and_val(s_in: Str) -> List[Str]:
+    s := str_trim(s_in)
+    n := str_len(s)
+    mut res := list_new()
+    if n == 0:
+        list_push(res, "")
+        list_push(res, "")
+        return res
+    mut end_ty := 0
+    first := str_substr(s, 0, 1)
+    if first == "[":
+        end_ty = ll_find_matching(s, 0, "[", "]") + 1
+    elif str_starts_with(s, "<{"):
+        end_ty = ll_find_matching(s, 0, "<", ">") + 1
+    elif first == "{":
+        end_ty = ll_find_matching(s, 0, "{", "}") + 1
+    else:
+        # Read until first space
+        mut i := 0
+        while i < n && str_substr(s, i, 1) != " ":
+            i = i + 1
+        end_ty = i
+    if end_ty <= 0 || end_ty > n:
+        list_push(res, s)
+        list_push(res, "")
+        return res
+    ty := str_trim(str_substr(s, 0, end_ty))
+    val := str_trim(str_substr(s, end_ty, n - end_ty))
+    list_push(res, ty)
+    list_push(res, val)
+    return res
+
+# Decode LLVM c"...\00\FF" byte string into a list of byte values (0..255)
+def ll_decode_c_bytes(lit: Str) -> List[Int]:
+    # lit starts with c" and ends with "
+    mut bytes := list_new()
+    n := str_len(lit)
+    if n < 3:
+        return bytes
+    mut i := 2
+    limit := n - 1
+    while i < limit:
+        ch := str_substr(lit, i, 1)
+        if ch == "\\" && i + 2 < limit:
+            c1 := str_substr(lit, i + 1, 1)
+            if c1 == "\\":
+                list_push(bytes, 92)
+                i = i + 2
+                continue
+            c2 := str_substr(lit, i + 2, 1)
+            b := ll_hex_val(c1) * 16 + ll_hex_val(c2)
+            list_push(bytes, b)
+            i = i + 3
+        else:
+            list_push(bytes, ord(char_at(lit, i)))
+            i = i + 1
+    return bytes
+
+# Emit pure-L++ flat-memory runtime prelude into output file
+def ll_emit_runtime_prelude(fp: RawPtr, total_global_bytes: Int):
+    fputs("# Generated by c2lpp v0.9.0 (Full LLVM-IR-to-L++ Flat-Memory Native Translator)\n\n", fp)
+    fputs("extern \"C\":\n", fp)
+    fputs("    def lpp_global_slot_get(idx: Int) -> Int\n", fp)
+    fputs("    def lpp_global_slot_set(idx: Int, val: Int)\n", fp)
+    fputs("    def calloc(nmemb: Int, size: Int) -> Int\n", fp)
+    fputs("    def memcpy(dst: Int, src: Int, n: Int) -> Int\n", fp)
+    fputs("    def memmove(dst: Int, src: Int, n: Int) -> Int\n", fp)
+    fputs("    def memset(dst: Int, c: Int, n: Int) -> Int\n\n", fp)
+
+    fputs("def _gbase() -> Int:\n", fp)
+    fputs("    return lpp_global_slot_get(0)\n\n", fp)
+
+    fputs("def _sp_alloc(n: Int) -> Int:\n", fp)
+    fputs("    sp := lpp_global_slot_get(1)\n", fp)
+    fputs("    lpp_global_slot_set(1, sp + n)\n", fp)
+    fputs("    return sp\n\n", fp)
+
+    fputs("def _sp_free(old_sp: Int):\n", fp)
+    fputs("    lpp_global_slot_set(1, old_sp)\n\n", fp)
+
+    # Flat-memory typed loads & stores
+    fputs("def _ld8(addr: Int) -> Int:\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        return ptr_read[U8](addr as Ptr[U8]) as Int\n\n", fp)
+
+    fputs("def _ld16(addr: Int) -> Int:\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        return ptr_read[U16](addr as Ptr[U16]) as Int\n\n", fp)
+
+    fputs("def _ld32(addr: Int) -> Int:\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        return ptr_read[U32](addr as Ptr[U32]) as Int\n\n", fp)
+
+    fputs("def _ld64(addr: Int) -> Int:\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        return ptr_read[Int](addr as Ptr[Int])\n\n", fp)
+
+    fputs("def _ldf64(addr: Int) -> Float:\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        return ptr_read[Float](addr as Ptr[Float])\n\n", fp)
+
+    fputs("def _st8(addr: Int, v: Int):\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        ptr_write[U8](addr as Ptr[U8], (v & 255) as U8)\n\n", fp)
+
+    fputs("def _st16(addr: Int, v: Int):\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        ptr_write[U16](addr as Ptr[U16], (v & 65535) as U16)\n\n", fp)
+
+    fputs("def _st32(addr: Int, v: Int):\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        ptr_write[U32](addr as Ptr[U32], (v & 4294967295) as U32)\n\n", fp)
+
+    fputs("def _st64(addr: Int, v: Int):\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        ptr_write[Int](addr as Ptr[Int], v)\n\n", fp)
+
+    fputs("def _stf64(addr: Int, v: Float):\n", fp)
+    fputs("    unsafe:\n", fp)
+    fputs("        ptr_write[Float](addr as Ptr[Float], v)\n\n", fp)
+
+    # IEEE-754 bitcast helpers using scratch slot 2 (8-byte buffer allocated in init)
+    fputs("def _i64_to_f64(bits: Int) -> Float:\n", fp)
+    fputs("    p := lpp_global_slot_get(2)\n", fp)
+    fputs("    _st64(p, bits)\n", fp)
+    fputs("    return _ldf64(p)\n\n", fp)
+
+    fputs("def _f64_to_i64(v: Float) -> Int:\n", fp)
+    fputs("    p := lpp_global_slot_get(2)\n", fp)
+    fputs("    _stf64(p, v)\n", fp)
+    fputs("    return _ld64(p)\n\n", fp)
+
+    # IEEE-754 float (32-bit) load/store via exact bit conversion to/from Float (f64)
+    fputs("def _ldf32(addr: Int) -> Float:\n", fp)
+    fputs("    bits := _ld32(addr) & 4294967295\n", fp)
+    fputs("    sign := (bits >> 31) & 1\n", fp)
+    fputs("    exp := (bits >> 23) & 255\n", fp)
+    fputs("    frac := bits & 8388607\n", fp)
+    fputs("    if exp == 0 && frac == 0:\n", fp)
+    fputs("        return _i64_to_f64(sign << 63)\n", fp)
+    fputs("    if exp == 255:\n", fp)
+    fputs("        return _i64_to_f64((sign << 63) | (2047 << 52) | (frac << 29))\n", fp)
+    fputs("    if exp == 0:\n", fp)
+    fputs("        mut m := frac\n", fp)
+    fputs("        mut e := -126\n", fp)
+    fputs("        while (m & 8388608) == 0:\n", fp)
+    fputs("            m = m << 1\n", fp)
+    fputs("            e = e - 1\n", fp)
+    fputs("        m = m & 8388607\n", fp)
+    fputs("        return _i64_to_f64((sign << 63) | ((e + 1023) << 52) | (m << 29))\n", fp)
+    fputs("    return _i64_to_f64((sign << 63) | ((exp - 127 + 1023) << 52) | (frac << 29))\n\n", fp)
+
+    fputs("def _stf32(addr: Int, v: Float):\n", fp)
+    fputs("    bits := _f64_to_i64(v)\n", fp)
+    fputs("    sign := ((bits as U64) >> (63 as U64)) as Int\n", fp)
+    fputs("    exp := (((bits as U64) >> (52 as U64)) as Int) & 2047\n", fp)
+    fputs("    frac := bits & 4503599627370495\n", fp)
+    fputs("    if exp == 0:\n", fp)
+    fputs("        _st32(addr, sign << 31)\n", fp)
+    fputs("        return\n", fp)
+    fputs("    if exp == 2047:\n", fp)
+    fputs("        _st32(addr, (sign << 31) | (255 << 23) | ((frac >> 29) & 8388607))\n", fp)
+    fputs("        return\n", fp)
+    fputs("    e32 := exp - 1023 + 127\n", fp)
+    fputs("    if e32 <= 0:\n", fp)
+    fputs("        _st32(addr, sign << 31)\n", fp)
+    fputs("        return\n", fp)
+    fputs("    if e32 >= 255:\n", fp)
+    fputs("        _st32(addr, (sign << 31) | (255 << 23))\n", fp)
+    fputs("        return\n", fp)
+    fputs("    _st32(addr, (sign << 31) | (e32 << 23) | ((frac >> 29) & 8388607))\n\n", fp)
+
+    # Width sign/zero extension & arithmetic helpers
+    fputs("def _sext1(v: Int) -> Int:\n", fp)
+    fputs("    if (v & 1) != 0:\n", fp)
+    fputs("        return -1\n", fp)
+    fputs("    return 0\n\n", fp)
+
+    fputs("def _sext8(v: Int) -> Int:\n", fp)
+    fputs("    b := v & 255\n", fp)
+    fputs("    if b >= 128:\n", fp)
+    fputs("        return b - 256\n", fp)
+    fputs("    return b\n\n", fp)
+
+    fputs("def _sext16(v: Int) -> Int:\n", fp)
+    fputs("    w := v & 65535\n", fp)
+    fputs("    if w >= 32768:\n", fp)
+    fputs("        return w - 65536\n", fp)
+    fputs("    return w\n\n", fp)
+
+    fputs("def _sext32(v: Int) -> Int:\n", fp)
+    fputs("    d := v & 4294967295\n", fp)
+    fputs("    if d >= 2147483648:\n", fp)
+    fputs("        return d - 4294967296\n", fp)
+    fputs("    return d\n\n", fp)
+
+    fputs("def _udiv64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    return ((a as U64) / (b as U64)) as Int\n\n", fp)
+
+    fputs("def _urem64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    return ((a as U64) % (b as U64)) as Int\n\n", fp)
+
+    fputs("def _lshr64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    return ((a as U64) >> ((b & 63) as U64)) as Int\n\n", fp)
+
+    fputs("def _ult64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    if (a as U64) < (b as U64):\n", fp)
+    fputs("        return 1\n", fp)
+    fputs("    return 0\n\n", fp)
+
+    fputs("def _ule64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    if (a as U64) <= (b as U64):\n", fp)
+    fputs("        return 1\n", fp)
+    fputs("    return 0\n\n", fp)
+
+    fputs("def _ugt64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    if (a as U64) > (b as U64):\n", fp)
+    fputs("        return 1\n", fp)
+    fputs("    return 0\n\n", fp)
+
+    fputs("def _uge64(a: Int, b: Int) -> Int:\n", fp)
+    fputs("    if (a as U64) >= (b as U64):\n", fp)
+    fputs("        return 1\n", fp)
+    fputs("    return 0\n\n", fp)
+
+    fputs("def _fptoui64(v: Float) -> Int:\n", fp)
+    fputs("    if v >= 9223372036854775808.0:\n", fp)
+    fputs("        return (((v - 9223372036854775808.0) as Int) | (-9223372036854775807 - 1))\n", fp)
+    fputs("    return v as Int\n\n", fp)
+
+    fputs("def _uitofp64(v: Int) -> Float:\n", fp)
+    fputs("    if v < 0:\n", fp)
+    fputs("        return ((v & 9223372036854775807) as Float) + 9223372036854775808.0\n", fp)
+    fputs("    return v as Float\n\n", fp)
+
+    fputs("def _fabs(v: Float) -> Float:\n", fp)
+    fputs("    if v < 0.0:\n", fp)
+    fputs("        return -v\n", fp)
+    fputs("    return v\n\n", fp)
+
+    # x86-64 SysV ABI va_list initializer: sets gp_offset=48, fp_offset=304, overflow_arg_area=va_ptr
+    fputs("def _va_init(ap: Int, va_ptr: Int):\n", fp)
+    fputs("    _st32(ap, 48)\n", fp)
+    fputs("    _st32(ap + 4, 304)\n", fp)
+    fputs("    _st64(ap + 8, va_ptr)\n", fp)
+    fputs("    _st64(ap + 16, 0)\n\n", fp)
+
+    # Helper to copy an L++ Str literal's bytes into global memory
+    fputs("def _copy_str(dst: Int, s: Str, n: Int):\n", fp)
+    fputs("    mut i := 0\n", fp)
+    fputs("    while i < n:\n", fp)
+    fputs("        _st8(dst + i, ord(char_at(s, i)))\n", fp)
+    fputs("        i = i + 1\n\n", fp)
+
+    # Base allocation helper (called by c2lpp_init_globals)
+    fputs("def _c2lpp_alloc_runtime():\n", fp)
+    fputs("    if lpp_global_slot_get(0) != 0:\n", fp)
+    fputs("        return\n", fp)
+    fputs(str_concat("    lpp_global_slot_set(0, calloc(", str_concat(int_to_str(total_global_bytes + 64), ", 1))\n")), fp)
+    fputs("    lpp_global_slot_set(1, calloc(16777216, 1))\n", fp)
+    fputs("    lpp_global_slot_set(2, calloc(64, 1))\n\n", fp)

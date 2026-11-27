@@ -11,6 +11,7 @@ import translator
 import c_func_translator
 import clang_ast_translator
 import stream_ast
+import llvm_ir_translator
 
 extern "C":
     def system(cmd: Str) -> Int
@@ -166,7 +167,7 @@ def run_selftest() -> Int:
         print_str("FAIL: c2lpp_translate_impl recursive struct translation")
         return 1
 
-    print_str("c2lpp v0.8.0 selftest OK (CSpan=16B+f64+align, FastHandle=8B, Pure-L++ Streaming Clang AST + Auto-Deps + OS Bridge)")
+    print_str("c2lpp v0.9.0 selftest OK (CSpan=16B+f64+align, FastHandle=8B, Pure-L++ Streaming Clang AST + Full LLVM-IR-to-L++ + Auto-Deps + OS Bridge)")
     return 0
 
 def run_bench() -> Int:
@@ -205,6 +206,37 @@ def main():
         return
     if first == "--bench":
         run_bench()
+        return
+
+    if first == "--from-ll" && argc >= 5 && args_get(3) == "-o":
+        rc := ll_translate_file(args_get(2), args_get(4))
+        if rc != 0:
+            exit(rc)
+        return
+
+    if first == "--full" && argc >= 3:
+        in_path := args_get(2)
+        mut out_path := str_concat(path_stem(in_path), ".lpp")
+        mut clang_flags := list_new()
+        mut ai := 3
+        while ai < argc:
+            a := args_get(ai)
+            if a == "-o" && ai + 1 < argc:
+                out_path = args_get(ai + 1)
+                ai = ai + 2
+                continue
+            list_push(clang_flags, a)
+            ai = ai + 1
+        flags_str := str_join(clang_flags, " ")
+        tmp_ll := "/tmp/c2lpp_full_ir.ll"
+        cmd := str_concat("clang -O0 -S -emit-llvm ", str_concat(flags_str, str_concat(" ", str_concat(in_path, str_concat(" -o ", tmp_ll)))))
+        rc := system(cmd)
+        if rc != 0:
+            print_str("FAIL: clang -S -emit-llvm failed")
+            exit(1)
+        trc := ll_translate_file(tmp_ll, out_path)
+        if trc != 0:
+            exit(trc)
         return
 
     if first == "--translate" && argc >= 3:

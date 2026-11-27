@@ -159,6 +159,23 @@ pub extern "C" fn lpp_atomic_fence() {
     fence(Ordering::SeqCst);
 }
 
+static GLOBAL_SLOTS: [AtomicI64; 64] = [const { AtomicI64::new(0) }; 64];
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_global_slot_get(idx: i64) -> i64 {
+    if !(0..64).contains(&idx) {
+        return 0;
+    }
+    GLOBAL_SLOTS[idx as usize].load(Ordering::Relaxed)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_global_slot_set(idx: i64, value: i64) {
+    if (0..64).contains(&idx) {
+        GLOBAL_SLOTS[idx as usize].store(value, Ordering::Relaxed);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn lpp_atomic_fence_acq() {
     fence(Ordering::Acquire);
