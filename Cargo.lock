@@ -505,7 +505,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "keel"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "clap",
  "flate2",
@@ -537,7 +537,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lpp"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-codegen-api"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-mir",
  "lpp-ownership",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-codegen-cranelift"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-codegen-gates"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-codegen-api",
  "lpp-codegen-cranelift",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-codegen-llvm"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-codegen-api",
  "lpp-config",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-codegen-wasm"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-codegen-api",
  "lpp-hir",
@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-common"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "serde",
  "target-lexicon",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-config"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "serde",
  "serde_json",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-driver"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "keel",
  "lpp-codegen-api",
@@ -669,14 +669,14 @@ dependencies = [
 
 [[package]]
 name = "lpp-frontend"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-common",
 ]
 
 [[package]]
 name = "lpp-hir"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-common",
  "lpp-frontend",
@@ -684,14 +684,14 @@ dependencies = [
 
 [[package]]
 name = "lpp-linker"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "object",
 ]
 
 [[package]]
 name = "lpp-mir"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-common",
  "lpp-hir",
@@ -700,11 +700,11 @@ dependencies = [
 
 [[package]]
 name = "lpp-net-runtime"
-version = "0.3.3"
+version = "0.3.31"
 
 [[package]]
 name = "lpp-ownership"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-common",
  "lpp-hir",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-passes"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-common",
  "lpp-hir",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-pm"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "semver",
  "serde",
@@ -736,14 +736,14 @@ dependencies = [
 
 [[package]]
 name = "lpp-runtime"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "lpp-runtime-abi"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "serde",
  "toml",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "lpp-types"
-version = "0.3.3"
+version = "0.3.31"
 dependencies = [
  "lpp-common",
  "lpp-hir",

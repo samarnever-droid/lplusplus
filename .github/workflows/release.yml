@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v0.3.3"
+        description: "Release tag, for example v0.3.31"
         required: true
         type: string
 
@@ -29,8 +29,12 @@ jobs:
         run: |
           set -euo pipefail
           REQUESTED_TAG='${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}'
-          test "$REQUESTED_TAG" = "v0.3.3"
-          test "$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="lpp"))')" = "0.3.3"
+          case "$REQUESTED_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "Invalid release tag: $REQUESTED_TAG" >&2; exit 1 ;;
+          esac
+          PACKAGE_VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="lpp"))')"
+          test "$REQUESTED_TAG" = "v$PACKAGE_VERSION"
       - name: Formatting and complete workspace tests
         run: |
           clang --version
