@@ -1,21 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">L++ icon (small sizes)</title>
-  <desc id="desc">Simplified L++ mark in a single prism hexagon, for favicons and CLI use.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="L++ Icon">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#101a35"/>
-      <stop offset="1" stop-color="#172a52"/>
-    </linearGradient>
-    <linearGradient id="prism" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#69d8ff"/>
-      <stop offset=".48" stop-color="#8b7bff"/>
-      <stop offset="1" stop-color="#57f0b4"/>
-    </linearGradient>
+    <clipPath id="pp-split-16">
+      <rect width="16" height="16" rx="3" />
+    </clipPath>
   </defs>
-  <rect width="512" height="512" rx="104" fill="url(#bg)"/>
-  <!-- single bold hexagon, no spokes, no glow -->
-  <path d="M256 54 418 148v216L256 458 94 364V148Z" fill="#0d1630" stroke="url(#prism)" stroke-width="28" stroke-linejoin="round"/>
-  <!-- heavier mark, centered on x=256 -->
-  <path d="M158 168v176h84" fill="none" stroke="#f7fbff" stroke-linecap="round" stroke-linejoin="round" stroke-width="44"/>
-  <path d="M290 222h50M315 197v50M362 222h50M387 197v50" fill="none" stroke="#f7fbff" stroke-linecap="round" stroke-width="26" transform="translate(-45 0)"/>
+  <g clip-path="url(#pp-split-16)">
+    <rect width="8" height="16" fill="#0B0B0B" />
+    <rect x="8" width="8" height="16" fill="#F76E1A" />
+    <path d="M3 5h2v2h2v2H5v2H3V9H1V7h2z" fill="#FCF5EE" />
+    <path d="M11 5h2v2h2v2h-2v2h-2V9H9V7h2z" fill="#0B0B0B" />
+  </g>
 </svg>
