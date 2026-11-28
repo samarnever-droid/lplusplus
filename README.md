@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/lpp-logo.svg" width="190" alt="L++ four-pillar prism logo">
+  <img src="assets/lpp-logo.svg" width="190" alt="L++ icon">
 </p>
 
 <h1 align="center">L++</h1>
